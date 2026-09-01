@@ -87,6 +87,32 @@ DNS_RCODES = {
     4: "NOTIMP (no implementado)", 5: "REFUSED (rechazado)",
 }
 
+RIP_COMANDOS = {1: "Request (pide la tabla)", 2: "Response (anuncia rutas)",
+                3: "Traceon (obsoleto)", 4: "Traceoff (obsoleto)"}
+
+OSPF_TIPOS = {1: "Hello", 2: "Database Description", 3: "Link State Request",
+              4: "Link State Update", 5: "Link State Acknowledgment"}
+
+OSPF_AUTH = {0: "sin autenticación", 1: "contraseña en claro", 2: "MD5"}
+
+LSA_TIPOS = {1: "Router-LSA", 2: "Network-LSA", 3: "Summary-LSA (red)",
+             4: "Summary-LSA (ASBR)", 5: "AS-external-LSA", 7: "NSSA-external"}
+
+IGMP_TIPOS = {0x11: "Membership Query", 0x12: "Report v1", 0x16: "Report v2",
+              0x17: "Leave Group", 0x22: "Report v3"}
+
+MULTICAST_CONOCIDAS = {
+    "224.0.0.1": "todos los hosts de la subred",
+    "224.0.0.2": "todos los routers de la subred",
+    "224.0.0.5": "todos los routers OSPF",
+    "224.0.0.6": "el DR y el BDR de OSPF",
+    "224.0.0.9": "todos los routers RIPv2",
+    "224.0.0.13": "PIM",
+    "224.0.0.18": "VRRP",
+    "224.0.0.22": "IGMPv3",
+    "224.0.0.251": "mDNS",
+}
+
 DHCP_MSG_TYPES = {
     1: "Discover", 2: "Offer", 3: "Request", 4: "Decline",
     5: "ACK", 6: "NAK", 7: "Release", 8: "Inform",
@@ -619,15 +645,18 @@ def parse_ipv4(pkt: Packet, base: int) -> None:
                      "(record route, timestamp, source routing...).")
 
     siguiente = base + hdr_len
+    pkt.payload_offset = siguiente
+    pkt.payload = d[siguiente:]
     if proto == 1:
         parse_icmp(pkt, siguiente)
     elif proto == 6:
         parse_tcp(pkt, siguiente)
     elif proto == 17:
         parse_udp(pkt, siguiente)
-    else:
-        pkt.payload_offset = siguiente
-        pkt.payload = d[siguiente:]
+    elif proto == 89:
+        parse_ospf(pkt, siguiente)
+    elif proto == 2:
+        parse_igmp(pkt, siguiente)
 
 
 def parse_ipv6(pkt: Packet, base: int) -> None:
@@ -909,7 +938,9 @@ def detectar_aplicacion(pkt: Packet, sport: int, dport: int) -> None:
     pkt.info["payload_ascii"] = safe_ascii(payload)
     pkt.info["payload_hex"] = payload.hex()
 
-    if 53 in puertos or 5353 in puertos:
+    if 520 in puertos:
+        parse_rip(pkt, pkt.payload_offset)
+    elif 53 in puertos or 5353 in puertos:
         parse_dns(pkt, pkt.payload_offset)
     elif puertos & {67, 68}:
         parse_dhcp(pkt, pkt.payload_offset)
@@ -1251,6 +1282,8 @@ NIVEL_CAMPOS = {
         "ip_proto", "ip_version", "src_port", "dst_port", "icmp_type",
         "icmp_code", "arp_oper", "arp_spa", "arp_tpa", "udp_length",
         "dns_qname", "http_line", "loopback_af",
+        "rip_command", "rip_version", "ospf_type", "ospf_version", "igmp_type",
+        "rip0_red", "ospf_router_id",
     },
     "medio": {
         "ip_ihl", "ip_total_length", "ip_id", "ip_checksum", "ip_tos",
@@ -1259,6 +1292,9 @@ NIVEL_CAMPOS = {
         "arp_htype", "arp_ptype", "arp_hlen", "arp_plen",
         "dns_txid", "dns_qr", "dns_qtype", "dns_qdcount", "dns_ancount",
         "ip6_plen", "dhcp_msg_type", "dhcp_yiaddr", "dhcp_chaddr",
+        "rip0_metrica", "rip0_mascara", "rip0_nexthop", "rip1_red",
+        "rip1_metrica", "ospf_area", "ospf_length", "ospf_hello_interval",
+        "ospf_dead_interval", "ospf_priority", "ospf_netmask", "igmp_grupo",
     },
     "dificil": {
         "ip_flags", "ip_df", "ip_mf", "ip_frag_offset", "ip_options",
@@ -1266,6 +1302,9 @@ NIVEL_CAMPOS = {
         "tcp_mss", "tcp_wscale", "dns_flags", "dns_rcode", "dns_qclass",
         "dns_nscount", "dns_arcount", "ip6_tclass", "ip6_flow",
         "dhcp_xid", "dhcp_magic", "dhcp_ciaddr", "dhcp_siaddr", "dhcp_op",
+        "rip0_afi", "rip0_tag", "rip1_mascara", "rip1_nexthop", "rip2_red",
+        "rip2_metrica", "ospf_checksum", "ospf_autype", "ospf_options",
+        "ospf_dr", "ospf_bdr", "ospf_neighbor", "ospf_n_lsa", "ospf_lsa_tipo",
     },
 }
 
@@ -2575,6 +2614,7 @@ def armar_pool(paquetes: List[Packet], dificultad: str, ascii_on: bool,
         pool.extend(preguntas_calculadas(p, ascii_on))
 
     pool.extend(preguntas_de_secuencia(paquetes))
+    pool.extend(preguntas_de_captura(paquetes, ascii_on))
     pool.extend(preguntas_ventana(paquetes, ascii_on))
     pool.extend(preguntas_gbn_sr())
 
@@ -2703,6 +2743,797 @@ def main() -> None:
         else:
             print("\nHasta la próxima.")
             return
+
+
+
+
+# ---------------------------------------------------------------------------
+# Protocolos de enrutamiento: RIP, OSPF e IGMP
+# ---------------------------------------------------------------------------
+
+def parse_rip(pkt: Packet, base: int) -> None:
+    """RIPv2 sobre UDP 520. Cabecera de 4 bytes + entradas de 20 bytes."""
+    d = pkt.raw
+    if len(d) < base + 4:
+        return
+    pkt.layers.append("RIP")
+
+    cmd, ver = d[base], d[base + 1]
+    pkt.add("rip_command", "Comando RIP", "RIP", base, 1, cmd,
+            note=f"{cmd} = {RIP_COMANDOS.get(cmd, 'desconocido')}. Un Request "
+                 "pide la tabla de rutas entera; un Response la anuncia. Los "
+                 "routers RIP mandan un Response cada 30 segundos aunque nadie "
+                 "les pregunte.")
+    pkt.add("rip_version", "Versión RIP", "RIP", base + 1, 1, ver,
+            note="La versión 2 añade máscara de red, next hop y route tag a "
+                 "cada entrada, y usa multicast 224.0.0.9 en lugar de "
+                 "broadcast. La versión 1 no llevaba máscara: era classful.")
+    pkt.info["rip_command_name"] = RIP_COMANDOS.get(cmd, str(cmd))
+
+    # cada ruta ocupa 20 bytes exactos
+    cuerpo = len(d) - (base + 4)
+    n_rutas = cuerpo // 20
+    pkt.info["rip_n_rutas"] = n_rutas
+    rutas = []
+    for i in range(n_rutas):
+        o = base + 4 + i * 20
+        if o + 20 > len(d):
+            break
+        afi = struct.unpack("!H", d[o:o + 2])[0]
+        tag = struct.unpack("!H", d[o + 2:o + 4])[0]
+        red = ip_to_str(d[o + 4:o + 8])
+        masc = ip_to_str(d[o + 8:o + 12])
+        nh = ip_to_str(d[o + 12:o + 16])
+        met = struct.unpack("!I", d[o + 16:o + 20])[0]
+        rutas.append({"red": red, "mascara": masc, "next_hop": nh,
+                      "metrica": met, "afi": afi, "tag": tag})
+
+        etq = f" (ruta {i + 1})" if n_rutas > 1 else ""
+        pkt.add(f"rip{i}_afi", f"AFI{etq}", "RIP", o, 2, afi,
+                note="Address Family Identifier: 2 = IPv4. Un AFI de 0 con "
+                     "métrica 16 es la petición especial de «mándame la tabla "
+                     "entera».")
+        pkt.add(f"rip{i}_tag", f"Route tag{etq}", "RIP", o + 2, 2, tag,
+                note="Marca rutas aprendidas de otro protocolo (redistribución). "
+                     "En una red RIP pura vale 0.")
+        pkt.add(f"rip{i}_red", f"Red anunciada{etq}", "RIP", o + 4, 4, red,
+                kind="ip",
+                note="La red que este router dice saber alcanzar.")
+        pkt.add(f"rip{i}_mascara", f"Máscara{etq}", "RIP", o + 8, 4, masc,
+                kind="ip",
+                note="Solo existe en RIPv2. Es lo que permite VLSM y CIDR: sin "
+                     "ella habría que asumir la máscara por clase.")
+        pkt.add(f"rip{i}_nexthop", f"Next hop{etq}", "RIP", o + 12, 4, nh,
+                kind="ip",
+                note="0.0.0.0 significa «mándamelo a mí, al que envía este "
+                     "paquete». Solo se rellena para evitar un salto extra "
+                     "cuando hay varios routers en la misma LAN.")
+        pkt.add(f"rip{i}_metrica", f"Métrica{etq}", "RIP", o + 16, 4, met,
+                note=f"{met} saltos. En RIP la métrica es el número de routers "
+                     "que hay que atravesar, y el máximo es 15: el valor 16 "
+                     "significa INFINITO, o sea red inalcanzable. Ese techo tan "
+                     "bajo es la principal limitación de RIP y lo que lo hace "
+                     "inservible en redes grandes.")
+    pkt.info["rip_rutas"] = rutas
+
+
+def parse_ospf(pkt: Packet, base: int) -> None:
+    """OSPFv2 va directo sobre IP con protocolo 89, sin TCP ni UDP."""
+    d = pkt.raw
+    if len(d) < base + 24:
+        return
+    pkt.layers.append("OSPF")
+
+    ver, tipo = d[base], d[base + 1]
+    largo = struct.unpack("!H", d[base + 2:base + 4])[0]
+    rid = ip_to_str(d[base + 4:base + 8])
+    area = ip_to_str(d[base + 8:base + 12])
+    cks = struct.unpack("!H", d[base + 12:base + 14])[0]
+    autype = struct.unpack("!H", d[base + 14:base + 16])[0]
+
+    pkt.add("ospf_version", "Versión OSPF", "OSPF", base, 1, ver,
+            note="2 para IPv4 (OSPFv2); la versión 3 es la de IPv6.")
+    pkt.add("ospf_type", "Tipo de paquete OSPF", "OSPF", base + 1, 1, tipo,
+            note=f"{tipo} = {OSPF_TIPOS.get(tipo, 'desconocido')}. Los cinco "
+                 "tipos son: 1 Hello (descubre vecinos y mantiene la "
+                 "adyacencia), 2 Database Description (resumen de la base de "
+                 "datos), 3 Link State Request (pide lo que le falta), 4 Link "
+                 "State Update (manda las LSA), 5 LSAck (las confirma).")
+    pkt.add("ospf_length", "Longitud OSPF", "OSPF", base + 2, 2, largo,
+            note="Bytes del paquete OSPF, cabecera incluida. No cuenta ni IP ni "
+                 "Ethernet.")
+    pkt.add("ospf_router_id", "Router ID", "OSPF", base + 4, 4, rid, kind="ip",
+            note="Identifica al router dentro del dominio OSPF. Tiene forma de "
+                 "IP pero NO es una dirección: es un identificador de 32 bits, "
+                 "normalmente la IP más alta de sus interfaces o una loopback.")
+    pkt.add("ospf_area", "Area ID", "OSPF", base + 8, 4, area, kind="ip",
+            note="0.0.0.0 es el área backbone (área 0), a la que deben "
+                 "conectarse todas las demás. Dividir en áreas es lo que "
+                 "permite a OSPF escalar donde RIP no puede.")
+    pkt.add("ospf_checksum", "Checksum OSPF", "OSPF", base + 12, 2, cks,
+            display=f"0x{cks:04x}", kind="hex")
+    pkt.add("ospf_autype", "Tipo de autenticación", "OSPF", base + 14, 2, autype,
+            note=f"{autype} = {OSPF_AUTH.get(autype, 'desconocido')}. A "
+                 "diferencia de ARP o RIPv1, OSPF sí puede autenticar sus "
+                 "mensajes, lo que dificulta que un atacante inyecte rutas "
+                 "falsas.")
+    pkt.info["ospf_type_name"] = OSPF_TIPOS.get(tipo, str(tipo))
+
+    if tipo == 1 and len(d) >= base + 44:      # Hello
+        o = base + 24
+        masc = ip_to_str(d[o:o + 4])
+        hello = struct.unpack("!H", d[o + 4:o + 6])[0]
+        opciones = d[o + 6]
+        prio = d[o + 7]
+        muerto = struct.unpack("!I", d[o + 8:o + 12])[0]
+        dr = ip_to_str(d[o + 12:o + 16])
+        bdr = ip_to_str(d[o + 16:o + 20])
+
+        pkt.add("ospf_netmask", "Máscara de red", "OSPF", o, 4, masc, kind="ip",
+                note="Los dos vecinos tienen que coincidir en la máscara, o no "
+                     "llegan a formar adyacencia.")
+        pkt.add("ospf_hello_interval", "Hello interval", "OSPF", o + 4, 2, hello,
+                note=f"Cada {hello} segundos se manda un Hello. Es uno de los "
+                     "parámetros que DEBEN coincidir entre vecinos.")
+        pkt.add("ospf_options", "Opciones", "OSPF", o + 6, 1, opciones,
+                display=f"0x{opciones:02x}", kind="hex",
+                note="Bits de capacidades: el bit E indica si el área acepta "
+                     "rutas externas.")
+        pkt.add("ospf_priority", "Prioridad del router", "OSPF", o + 7, 1, prio,
+                note=f"{prio}. Sirve para elegir el DR de la red: gana la "
+                     "prioridad más alta y, en caso de empate, el Router ID "
+                     "mayor. Con prioridad 0 el router renuncia a ser DR.")
+        pkt.add("ospf_dead_interval", "Dead interval", "OSPF", o + 8, 4, muerto,
+                note=f"{muerto} segundos sin recibir un Hello y el vecino se da "
+                     f"por caído. Suele ser 4 veces el hello interval "
+                     f"({hello} x 4 = {hello * 4}"
+                     + (", que es justo lo que vale aquí)."
+                        if muerto == hello * 4 else f", aquí vale {muerto}).")
+                     + " También tiene que coincidir entre vecinos.")
+        pkt.add("ospf_dr", "Designated Router", "OSPF", o + 12, 4, dr, kind="ip",
+                note="0.0.0.0 significa que todavía no se ha elegido DR. El DR "
+                     "centraliza el intercambio de LSA en redes con muchos "
+                     "routers, para no tener que emparejarlos todos con todos.")
+        pkt.add("ospf_bdr", "Backup Designated Router", "OSPF", o + 16, 4, bdr,
+                kind="ip", note="El suplente del DR, listo para reemplazarlo.")
+
+        vecinos = []
+        v = o + 20
+        while v + 4 <= min(len(d), base + largo):
+            vecinos.append(ip_to_str(d[v:v + 4]))
+            v += 4
+        pkt.info["ospf_vecinos"] = vecinos
+        if vecinos:
+            pkt.add("ospf_neighbor", "Vecino declarado", "OSPF", o + 20, 4,
+                    vecinos[0], kind="ip",
+                    note=f"Lista de Router ID que este router ya está oyendo "
+                         f"({len(vecinos)} en este Hello). Verse a uno mismo en "
+                         "la lista del vecino es lo que confirma que la "
+                         "comunicación es bidireccional.")
+
+    elif tipo == 4 and len(d) >= base + 28:    # Link State Update
+        n = struct.unpack("!I", d[base + 24:base + 28])[0]
+        pkt.add("ospf_n_lsa", "Número de LSA", "OSPF", base + 24, 4, n,
+                note="Cuántos anuncios de estado de enlace vienen en este "
+                     "paquete. Cada LSA describe un trozo de la topología; con "
+                     "todas ellas cada router construye el mismo mapa y corre "
+                     "Dijkstra sobre él.")
+        if len(d) >= base + 32 + 4:
+            tipo_lsa = d[base + 28 + 3]
+            pkt.add("ospf_lsa_tipo", "Tipo de la primera LSA", "OSPF",
+                    base + 28 + 3, 1, tipo_lsa,
+                    note=f"{tipo_lsa} = {LSA_TIPOS.get(tipo_lsa, 'desconocido')}. "
+                         "La Router-LSA describe los enlaces del propio router; "
+                         "la Network-LSA, una red de acceso múltiple.")
+
+
+def parse_igmp(pkt: Packet, base: int) -> None:
+    """IGMP: cómo un host se apunta o se borra de un grupo multicast."""
+    d = pkt.raw
+    if len(d) < base + 8:
+        return
+    pkt.layers.append("IGMP")
+    tipo = d[base]
+    pkt.add("igmp_type", "Tipo IGMP", "IGMP", base, 1, tipo,
+            display=f"0x{tipo:02x}", kind="hex",
+            note=f"0x{tipo:02x} = {IGMP_TIPOS.get(tipo, 'desconocido')}. IGMP "
+                 "es cómo un host le dice al router «quiero recibir este grupo "
+                 "multicast». El router usa esa información para saber por qué "
+                 "puertos reenviar el tráfico del grupo.")
+    if tipo != 0x22:
+        pkt.add("igmp_grupo", "Grupo multicast", "IGMP", base + 4, 4,
+                ip_to_str(d[base + 4:base + 8]), kind="ip",
+                note="La dirección de grupo a la que se refiere el mensaje.")
+
+
+# ---------------------------------------------------------------------------
+# Análisis de la captura completa: preguntas derivadas de lo que hay dentro
+# ---------------------------------------------------------------------------
+
+def _txt(n, sing, plur=None):
+    return sing if n == 1 else (plur or sing + "s")
+
+
+def preguntas_rip(pkts: List[Packet], ascii_on: bool) -> List[Question]:
+    """Todo se calcula sobre los paquetes RIP que haya en la captura."""
+    rip = [p for p in pkts if "RIP" in p.layers]
+    if not rip:
+        return []
+    qs = []
+
+    routers = sorted({p.info["src_ip"] for p in rip})
+    qs.append(Question(
+        prompt=f"Esta captura tiene {len(rip)} paquetes RIP. ¿Cuántos routers "
+               "DISTINTOS están anunciando rutas por RIP?",
+        kind="text", answer=len(routers), answer_kind="int",
+        explain="Basta con contar las IP de origen distintas de los paquetes "
+                f"con puerto UDP 520: {', '.join(routers)}. Son "
+                f"{len(routers)}. En una topología RIP cada router habla con "
+                "sus vecinos directos y les manda su tabla entera cada 30 "
+                "segundos.",
+        difficulty="medio", category="RIP"))
+
+    destinos = Counter(p.info["dst_ip"] for p in rip)
+    dst, veces = destinos.most_common(1)[0]
+    otras = [k for k in MULTICAST_CONOCIDAS if k != dst][:3]
+    opts, idx = mcq_opciones(
+        f"{dst} — {MULTICAST_CONOCIDAS.get(dst, 'grupo multicast')}",
+        [f"{k} — {MULTICAST_CONOCIDAS[k]}" for k in otras])
+    qs.append(Question(
+        prompt=f"{veces} de los {len(rip)} paquetes RIP de esta captura van a "
+               "una misma dirección de destino. ¿Cuál es, y a quién representa?",
+        kind="mcq", answer=idx, options=opts,
+        explain=f"Van a {dst}. RIPv2 usa esa dirección multicast para que solo "
+                "la procesen los routers que hablan RIP, en vez de molestar a "
+                "todos los hosts con un broadcast como hacía RIPv1. En el "
+                "volcado se nota también en la MAC destino, que empieza por "
+                "01:00:5e (el prefijo de multicast IPv4).",
+        difficulty="medio", category="RIP"))
+
+    ttls = {p.info["ip_ttl"] for p in rip}
+    if ttls == {1}:
+        qs.append(Question(
+            prompt="Todos los paquetes RIP de esta captura salen con TTL=1. "
+                   "¿Por qué?",
+            kind="mcq", answer=0,
+            options=["Para que ningún router los reenvíe: RIP solo debe hablar "
+                     "con los vecinos directamente conectados",
+                     "Porque la red tiene un solo salto de diámetro",
+                     "Porque el TTL de multicast siempre vale 1 por norma",
+                     "Es un error de configuración de los routers"],
+            explain="Con TTL=1 el primer router que reciba el paquete lo "
+                    "descarta en lugar de reenviarlo. Es intencionado: los "
+                    "anuncios RIP son de alcance local, cada router solo debe "
+                    "enterarse de lo que le cuentan sus vecinos inmediatos, y "
+                    "luego él propaga su propia versión. Lo mismo hace OSPF con "
+                    "sus Hello.",
+            difficulty="dificil", category="RIP"))
+
+    cmds = Counter(p.info["rip_command"] for p in rip)
+    if len(cmds) > 1:
+        n_req = cmds.get(1, 0)
+        qs.append(Question(
+            prompt=f"De los {len(rip)} paquetes RIP, ¿cuántos son de tipo "
+                   "Request (comando 1), es decir peticiones de la tabla?",
+            kind="text", answer=n_req, answer_kind="int",
+            explain=f"{n_req} Request y {cmds.get(2, 0)} Response. El Request "
+                    "aparece sobre todo al arrancar un router: pide la tabla "
+                    "completa para no esperar los 30 segundos del siguiente "
+                    "anuncio periódico.",
+            difficulty="medio", category="RIP"))
+
+    # rutas realmente anunciadas
+    todas = []
+    for p in rip:
+        for r in p.info.get("rip_rutas", []):
+            if r["red"] != "0.0.0.0":
+                todas.append((p.info["src_ip"], r["red"], r["mascara"],
+                              r["metrica"]))
+    if todas:
+        origen, red, masc, met = random.choice(todas)
+        qs.append(Question(
+            prompt=f"El router {origen} anuncia la red {red} en esta captura. "
+                   "¿Con qué métrica (número de saltos) la anuncia?",
+            kind="text", answer=met, answer_kind="int",
+            explain=f"Métrica {met}. En RIP la métrica es sencillamente cuántos "
+                    "routers hay que atravesar para llegar. Una métrica de 1 "
+                    "significa que la red está directamente conectada al router "
+                    "que la anuncia. El máximo válido es 15, y 16 quiere decir "
+                    "inalcanzable: por eso RIP no sirve en redes con más de 15 "
+                    "saltos de diámetro.",
+            difficulty="medio", category="RIP"))
+
+        redes = sorted({r for _, r, _, _ in todas})
+        qs.append(Question(
+            prompt="¿Cuántas redes DISTINTAS se anuncian por RIP en toda esta "
+                   "captura?",
+            kind="text", answer=len(redes), answer_kind="int",
+            explain=f"Son {len(redes)}: {', '.join(redes)}. Juntando todos los "
+                    "anuncios se puede reconstruir la topología completa sin "
+                    "tener acceso a ningún router.",
+            difficulty="dificil", category="RIP"))
+
+        mascaras = {ma for _, _, ma, _ in todas}
+        if len(mascaras) == 1:
+            ma = mascaras.pop()
+            bits = sum(bin(int(x)).count("1") for x in ma.split("."))
+            hosts = max(0, 2 ** (32 - bits) - 2)
+            qs.append(Question(
+                prompt=f"Todas las redes anunciadas llevan la máscara {ma}. "
+                       "¿Cuántos hosts útiles caben en una red así?",
+                kind="text", answer=hosts, answer_kind="int",
+                explain=f"{ma} son {bits} bits de red, así que quedan "
+                        f"{32 - bits} bits de host: 2^{32 - bits} - 2 = {hosts} "
+                        "direcciones utilizables (se restan la de red y la de "
+                        "broadcast)."
+                        + ("  Una /30 con 2 hosts es lo típico de un enlace "
+                           "punto a punto entre dos routers." if bits == 30
+                           else ""),
+                difficulty="dificil", category="RIP"))
+
+    infinitas = [p for p in rip
+                 if any(r["metrica"] == 16 for r in p.info.get("rip_rutas", []))]
+    if infinitas:
+        qs.append(Question(
+            prompt=f"En {len(infinitas)} paquetes RIP de esta captura aparece "
+                   "una entrada con métrica 16. ¿Qué significa ese valor?",
+            kind="mcq", answer=0,
+            options=["Infinito: la red es inalcanzable",
+                     "Que la ruta es la mejor disponible",
+                     "Que hay exactamente 16 saltos hasta el destino",
+                     "Que la entrada usa autenticación"],
+            explain="16 es el infinito de RIP. Se usa para dos cosas: anunciar "
+                    "que una red ya no se alcanza (envenenamiento de ruta, para "
+                    "que los vecinos la borren en vez de esperar a que expire) "
+                    "y, con AFI=0, para pedir la tabla de rutas completa. Como "
+                    "el máximo útil es 15, ese contador tan corto es también lo "
+                    "que impide que un bucle de enrutamiento dure para siempre.",
+            difficulty="dificil", category="RIP"))
+    return qs
+
+
+def preguntas_ospf(pkts: List[Packet], ascii_on: bool) -> List[Question]:
+    """Preguntas calculadas sobre los paquetes OSPF de la captura."""
+    ospf = [p for p in pkts if "OSPF" in p.layers]
+    if not ospf:
+        return []
+    qs = []
+
+    qs.append(Question(
+        prompt="OSPF no usa ni TCP ni UDP: viaja directamente sobre IP. "
+               "¿Qué número lleva el campo «protocolo» de la cabecera IP en "
+               "estos paquetes?",
+        kind="text", answer=89, answer_kind="int",
+        explain="89. Por eso en el volcado no hay puertos que leer: después de "
+                "la cabecera IP empieza directamente la cabecera OSPF. RIP, en "
+                "cambio, sí va sobre UDP (puerto 520), y ahí sí hay puertos.",
+        difficulty="medio", category="OSPF"))
+
+    rids = sorted({p.info["ospf_router_id"] for p in ospf})
+    qs.append(Question(
+        prompt=f"¿Cuántos Router ID distintos aparecen en los {len(ospf)} "
+               "paquetes OSPF de esta captura?",
+        kind="text", answer=len(rids), answer_kind="int",
+        explain=f"{len(rids)}: {', '.join(rids)}. El Router ID tiene forma de "
+                "dirección IP pero no lo es: es un identificador de 32 bits que "
+                "distingue a cada router dentro del dominio OSPF.",
+        difficulty="medio", category="OSPF"))
+
+    tipos = Counter(p.info["ospf_type"] for p in ospf)
+    mas_comun, veces = tipos.most_common(1)[0]
+    nombre = OSPF_TIPOS.get(mas_comun, str(mas_comun))
+    opts, idx = mcq_opciones(nombre, [v for v in OSPF_TIPOS.values()
+                                      if v != nombre])
+    qs.append(Question(
+        prompt=f"¿Cuál es el tipo de paquete OSPF más frecuente en esta "
+               f"captura? (aparece {veces} veces de {len(ospf)})",
+        kind="mcq", answer=idx, options=opts,
+        explain="Reparto real en esta captura: "
+                + ", ".join(f"{OSPF_TIPOS.get(t, t)}={c}"
+                            for t, c in sorted(tipos.items()))
+                + ". Los Hello son los más numerosos porque se repiten cada "
+                  "pocos segundos para mantener viva la adyacencia, mientras "
+                  "que los Update solo aparecen cuando algo cambia.",
+        difficulty="medio", category="OSPF"))
+
+    hellos = [p for p in ospf if p.info.get("ospf_type") == 1
+              and "ospf_hello_interval" in p.info]
+    if hellos:
+        h = hellos[0]
+        hi = h.info["ospf_hello_interval"]
+        di = h.info["ospf_dead_interval"]
+        qs.append(Question(
+            prompt=f"Los Hello de esta captura llevan hello interval={hi} y "
+                   f"dead interval={di} segundos. ¿Qué relación hay entre los "
+                   "dos, y para qué sirve el segundo?",
+            kind="mcq", answer=0,
+            options=[f"El dead es {di // hi} veces el hello: es el tiempo sin "
+                     "recibir Hello tras el cual se da al vecino por caído",
+                     "El dead es el tiempo que tarda en converger la red",
+                     "El dead marca cada cuánto se reenvían las LSA",
+                     "No tienen ninguna relación entre sí"],
+            explain=f"{hi} x {di // hi} = {di}. La proporción habitual es 4:1, "
+                    "para tolerar la pérdida de tres Hello seguidos antes de "
+                    "declarar caído al vecino. Los dos valores tienen que "
+                    "COINCIDIR en ambos extremos: si no, los routers ni "
+                    "siquiera llegan a formar adyacencia.",
+            difficulty="dificil", category="OSPF"))
+
+        qs.append(Question(
+            prompt=f"Si un router deja de recibir Hello de su vecino, ¿cuántos "
+                   f"segundos pasan antes de darlo por caído, según esta "
+                   "captura?",
+            kind="text", answer=di, answer_kind="int",
+            explain=f"El dead interval: {di} segundos. Bajarlo hace que la red "
+                    "reaccione más rápido a una caída, pero aumenta el riesgo "
+                    "de declarar caído a un vecino por una congestión pasajera.",
+            difficulty="medio", category="OSPF"))
+
+        areas = {p.info["ospf_area"] for p in ospf}
+        if len(areas) == 1:
+            area = areas.pop()
+            qs.append(Question(
+                prompt=f"Todos los paquetes OSPF llevan Area ID = {area}. "
+                       "¿Qué significa esa área en concreto?",
+                kind="mcq", answer=0,
+                options=["Es el área 0, el backbone: todas las demás áreas "
+                         "deben conectarse a ella"
+                         if area == "0.0.0.0" else
+                         f"Es el área {area}, un área normal distinta del backbone",
+                         "Es un área reservada para rutas externas",
+                         "Significa que el router no tiene área asignada",
+                         "Es el identificador del sistema autónomo"],
+                explain=("El área 0.0.0.0 es el backbone. OSPF divide el "
+                         "dominio en áreas para que cada router solo tenga que "
+                         "conocer al detalle la topología de la suya: eso es lo "
+                         "que le permite escalar donde RIP, que manda la tabla "
+                         "entera a todos, no puede."
+                         if area == "0.0.0.0" else
+                         f"El área {area} no es el backbone; tendría que "
+                         "conectarse al área 0 para intercambiar rutas con el "
+                         "resto del dominio."),
+                difficulty="dificil", category="OSPF"))
+
+        prios = {p.info.get("ospf_priority") for p in hellos}
+        drs = {p.info.get("ospf_dr") for p in hellos}
+        if drs == {"0.0.0.0"}:
+            qs.append(Question(
+                prompt="En todos los Hello, el campo Designated Router vale "
+                       "0.0.0.0. ¿Qué indica eso?",
+                kind="mcq", answer=0,
+                options=["Que todavía no se ha elegido DR en esa red",
+                         "Que el router se niega a participar en la elección",
+                         "Que la red no admite multicast",
+                         "Que el DR está caído"],
+                explain="Un DR en 0.0.0.0 significa que la elección aún no ha "
+                        "ocurrido. En enlaces punto a punto (una máscara /30, "
+                        "por ejemplo) directamente no hace falta DR: solo hay "
+                        "dos routers, así que no hay nada que centralizar. El "
+                        "DR tiene sentido en redes de acceso múltiple con "
+                        "muchos routers, para no tener que emparejarlos todos "
+                        "con todos.",
+                difficulty="dificil", category="OSPF"))
+        elif prios:
+            pr = sorted(x for x in prios if x is not None)[-1]
+            qs.append(Question(
+                prompt="¿Qué prioridad anuncian los routers en sus Hello, y "
+                       "para qué sirve?",
+                kind="text", answer=pr, answer_kind="int",
+                explain=f"Prioridad {pr}. Se usa para elegir el DR: gana la más "
+                        "alta y, si hay empate, el Router ID mayor. Un router "
+                        "con prioridad 0 renuncia explícitamente a ser DR.",
+                difficulty="dificil", category="OSPF"))
+
+    lsu = [p for p in ospf if p.info.get("ospf_type") == 4
+           and "ospf_n_lsa" in p.info]
+    if lsu:
+        total = sum(p.info["ospf_n_lsa"] for p in lsu)
+        qs.append(Question(
+            prompt=f"Sumando los {len(lsu)} Link State Update de esta captura, "
+                   "¿cuántas LSA se transmiten en total?",
+            kind="text", answer=total, answer_kind="int",
+            explain=f"{total}. Cada LSU lleva un contador de cuántas LSA "
+                    "transporta. Con todas las LSA cada router construye una "
+                    "copia idéntica del mapa de la red y ejecuta Dijkstra sobre "
+                    "ella: por eso OSPF es de estado de enlace y RIP, de vector "
+                    "distancia.",
+            difficulty="dificil", category="OSPF"))
+    return qs
+
+
+def preguntas_ataque(pkts: List[Packet], ascii_on: bool) -> List[Question]:
+    """Detecta patrones de ataque en la captura y pregunta con datos reales."""
+    qs = []
+
+    # ---- inundación ICMP, con la tasa calculada de las marcas de tiempo ----
+    reqs = [p for p in pkts if p.info.get("icmp_type") == 8]
+    if len(reqs) >= 100:
+        pares = Counter((p.info["src_ip"], p.info["dst_ip"]) for p in reqs)
+        (src, dst), n = pares.most_common(1)[0]
+        rafaga = [p for p in reqs
+                  if p.info["src_ip"] == src and p.info["dst_ip"] == dst]
+        dur = rafaga[-1].ts - rafaga[0].ts
+        tasa = int(n / dur) if dur > 0 else n
+
+        qs.append(Question(
+            prompt=f"Esta captura tiene {n} Echo Request de {src} a {dst} en "
+                   f"{dur:.1f} segundos. ¿Cuántos paquetes por segundo son, "
+                   "redondeando?",
+            kind="text", answer=tasa, answer_kind="int",
+            explain=f"{n} / {dur:.2f} s = {tasa} paquetes por segundo. Un ping "
+                    "normal manda UNO por segundo. Tres órdenes de magnitud por "
+                    "encima solo se consiguen con una herramienta de flood "
+                    "(hping3 --flood, ping -f), y el objetivo no es "
+                    "diagnosticar nada sino agotar ancho de banda o CPU.",
+            difficulty="dificil", category="Ataque - flood"))
+
+        octetos = dst.split(".")
+        if dst.endswith(".255") or dst == "255.255.255.255":
+            respuestas = [p for p in pkts if p.info.get("icmp_type") == 0]
+            qs.append(Question(
+                prompt=f"Esos {n} Echo Request no van a un host concreto, sino "
+                       f"a {dst}. ¿Qué consigue el atacante mandándolos ahí?",
+                kind="mcq", answer=0,
+                options=["Amplificación: es una dirección de broadcast, así que "
+                         "cada paquete puede provocar una respuesta de CADA "
+                         "host de la red",
+                         "Nada: los paquetes a broadcast se descartan siempre",
+                         "Cifrar el ataque para que no se detecte",
+                         "Descubrir qué puertos tiene abiertos la víctima"],
+                explain=f"{dst} es la dirección de broadcast de la red (y en el "
+                        "volcado se ve además que la MAC destino es "
+                        "ff:ff:ff:ff:ff:ff). Un solo paquete al broadcast puede "
+                        "generar tantas respuestas como hosts haya: ese es el "
+                        "factor de amplificación. Si además el atacante "
+                        "FALSIFICARA la IP de origen poniendo la de la víctima, "
+                        "todas esas respuestas irían a parar a ella sin que "
+                        "ella hubiera enviado nada: eso es exactamente el "
+                        f"ataque Smurf. Aquí hay {len(respuestas)} Echo Reply "
+                        "en la captura.",
+                difficulty="dificil", category="Ataque - flood"))
+
+        tam = Counter(p.info.get("ip_total_length") for p in rafaga)
+        t, _ = tam.most_common(1)[0]
+        if t is not None:
+            qs.append(Question(
+                prompt=f"Cada paquete de la ráfaga tiene longitud total IP = "
+                       f"{t} bytes. ¿Cuántos bytes de DATOS lleva el ICMP?",
+                kind="text", answer=max(0, t - 20 - 8), answer_kind="int",
+                explain=f"{t} - 20 (cabecera IP) - 8 (cabecera ICMP) = "
+                        f"{max(0, t - 20 - 8)} bytes."
+                        + (" Cero: son paquetes mínimos, sin carga. Al atacante "
+                           "no le interesa el contenido, sino la CANTIDAD: "
+                           "muchos paquetes pequeños agotan la capacidad de "
+                           "procesar paquetes por segundo, no el ancho de banda."
+                           if t - 20 - 8 == 0 else
+                           " Un ping normal de Linux lleva 56 bytes de datos, "
+                           "que con las cabeceras dan 84 en total."),
+                difficulty="dificil", category="Ataque - flood"))
+
+    # ---- ARP spoofing, identificando la MAC culpable ----
+    replies = [p for p in pkts if p.info.get("arp_oper") == 2]
+    if replies:
+        por_mac = defaultdict(set)
+        for p in replies:
+            por_mac[p.info["arp_sha"]].add(p.info["arp_spa"])
+        culpables = {m: ips for m, ips in por_mac.items() if len(ips) > 1}
+        if culpables:
+            mac = sorted(culpables)[0]
+            ips = sorted(culpables[mac])
+            limpias = [m for m in por_mac if m not in culpables]
+            opts, idx = mcq_opciones(mac, limpias)
+            qs.append(Question(
+                prompt="En esta captura hay una MAC que dice ser dueña de más "
+                       "de una IP a la vez en sus respuestas ARP. ¿Cuál es?",
+                kind="mcq", answer=idx, options=opts,
+                explain=f"{mac} reclama {len(ips)} IP distintas: "
+                        f"{', '.join(ips)}. Es el atacante: se hace pasar por "
+                        "las dos víctimas a la vez para que el tráfico entre "
+                        "ellas pase por él. Las otras MAC de la captura "
+                        "reclaman una sola IP cada una, que es lo normal.",
+                difficulty="dificil", category="Ataque - MITM"))
+
+            qs.append(Question(
+                prompt=f"¿Cuántas IP distintas reclama esa misma MAC?",
+                kind="text", answer=len(ips), answer_kind="int",
+                explain=f"{len(ips)}: {', '.join(ips)}. En una red sana la "
+                        "relación IP-MAC es uno a uno. Wireshark marca esto "
+                        "como «duplicate use of <IP> detected!».",
+                difficulty="medio", category="Ataque - MITM"))
+
+        peticiones = [p for p in pkts if p.info.get("arp_oper") == 1]
+        if len(replies) > 3 * max(1, len(peticiones)):
+            qs.append(Question(
+                prompt=f"La captura tiene {len(replies)} respuestas ARP pero "
+                       f"solo {len(peticiones)} "
+                       f"{_txt(len(peticiones), 'petición', 'peticiones')}. "
+                       "¿Por qué es sospechoso?",
+                kind="mcq", answer=0,
+                options=["Porque son respuestas que nadie pidió (gratuitous "
+                         "ARP): así se envenena la caché de las víctimas",
+                         "Porque ARP siempre debe tener más peticiones que "
+                         "respuestas por diseño del protocolo",
+                         "Porque indica que la red está congestionada",
+                         "Porque las respuestas ARP no existen en IPv4"],
+                explain="En una red normal cada respuesta contesta a una "
+                        f"petición previa, así que la proporción es 1:1. Aquí "
+                        f"hay {len(replies)} respuestas para "
+                        f"{len(peticiones)} peticiones: el atacante está "
+                        "repitiendo anuncios sin parar para que su entrada "
+                        "falsa se quede en la caché de las víctimas y no la "
+                        "sobrescriba la legítima.",
+                difficulty="dificil", category="Ataque - MITM"))
+
+    # ---- TTL inconsistente: la prueba de que alguien reenvía el tráfico ----
+    # OJO: RIP, OSPF e IGMP usan TTL=1 a propósito para no salir de la LAN, y
+    # el multicast suele llevar TTL bajo. Mezclarlos con el tráfico normal daría
+    # un falso positivo de MITM, así que se excluyen.
+    def es_control(p: Packet) -> bool:
+        if {"RIP", "OSPF", "IGMP"} & set(p.layers):
+            return True
+        d = p.info.get("dst_ip", "")
+        if d.endswith(".255") or d == "255.255.255.255":
+            return True
+        try:
+            return 224 <= int(d.split(".")[0]) <= 239
+        except (ValueError, IndexError):
+            return False
+
+    ttls = defaultdict(set)
+    for p in pkts:
+        if ("ip_ttl" in p.info and "src_ip" in p.info and "IPv4" in p.layers
+                and not es_control(p)):
+            ttls[p.info["src_ip"]].add(p.info["ip_ttl"])
+    # solo cuenta si los TTL son contiguos: un salto de reenvío resta 1
+    raros = {ip: v for ip, v in ttls.items()
+             if len(v) > 1 and max(v) - min(v) <= 2}
+    if raros:
+        ip = sorted(raros)[0]
+        vals = sorted(raros[ip])
+        qs.append(Question(
+            prompt=f"La IP {ip} aparece como origen con TTL {vals} en distintos "
+                   "paquetes de esta captura, aunque es un solo host de la red "
+                   "local. ¿Qué lo explica?",
+            kind="mcq", answer=0,
+            options=["Un tercer equipo está reenviando parte de su tráfico, y "
+                     "ese salto extra le resta 1 al TTL",
+                     "El host cambia su TTL inicial según la aplicación",
+                     "Los paquetes se fragmentaron por el camino",
+                     "Es un error de la tarjeta de red"],
+            explain=f"Un host usa siempre el mismo TTL inicial ({max(vals)} "
+                    "aquí). Ver el mismo origen con "
+                    f"{max(vals)} y {min(vals)} significa que unos paquetes "
+                    "llegaron directos y otros pasaron por un salto de más. En "
+                    "una LAN sin routers, ese salto es alguien haciendo IP "
+                    "forwarding: el atacante que reenvía el tráfico "
+                    "interceptado para que la víctima no note el corte. Es la "
+                    "confirmación del Man-in-the-Middle, y encaja con las "
+                    "respuestas ARP falsificadas.",
+            difficulty="dificil", category="Ataque - MITM"))
+    return qs
+
+
+def preguntas_sesion(pkts: List[Packet], ascii_on: bool) -> List[Question]:
+    """Reconstruye conversaciones en texto plano (FTP, HTTP) y pregunta."""
+    qs = []
+    lineas = []
+    for p in pkts:
+        if "TCP" not in p.layers or not p.payload:
+            continue
+        # se decodifica de verdad: safe_ascii convertiría el CRLF en puntos y
+        # esos puntos acabarían pegados al final de cada respuesta
+        legible = sum(1 for b in p.payload if 32 <= b <= 126 or b in (13, 10))
+        if legible < len(p.payload) * 0.9:
+            continue
+        texto = p.payload.decode("latin-1")
+        for l in texto.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
+            l = l.strip()
+            if l:
+                lineas.append((p, l))
+    if not lineas:
+        return qs
+
+    # credenciales en claro
+    usuarios = [(p, l) for p, l in lineas if l.upper().startswith("USER ")]
+    if usuarios:
+        p, l = usuarios[0]
+        usuario = l.split(None, 1)[1] if " " in l else ""
+        qs.append(Question(
+            prompt="En el payload de esta captura viaja un inicio de sesión en "
+                   "TEXTO PLANO. ¿Con qué nombre de usuario se conecta el "
+                   "cliente?",
+            kind="text", answer=usuario, answer_kind="text",
+            explain=f"El paquete #{p.num} lleva «{l}» y se lee directamente en "
+                    "la columna ASCII del volcado, sin descifrar nada. FTP, "
+                    "Telnet, SMTP y HTTP mandan las credenciales tal cual: por "
+                    "eso cualquiera que capture el tráfico las obtiene. Es "
+                    "exactamente el motivo por el que existen SFTP, SSH y HTTPS.",
+            difficulty="medio", category="Sesión en claro"))
+
+    # puerto de datos negociado en modo pasivo
+    for p, l in lineas:
+        mm = re.search(r"\(\|\|\|(\d+)\|\)", l)
+        if mm:
+            puerto = int(mm.group(1))
+            usado = any(x.info.get("src_port") == puerto
+                        or x.info.get("dst_port") == puerto for x in pkts)
+            qs.append(Question(
+                prompt=f"El servidor responde «{l[:52]}». ¿En qué puerto va a "
+                       "escuchar la conexión de DATOS?",
+                kind="text", answer=puerto, answer_kind="int",
+                explain=f"El {puerto}, entre las barras verticales de la "
+                        "respuesta 229. FTP usa DOS conexiones: la de control "
+                        "(puerto 21), que se ve durante toda la sesión, y una "
+                        "de datos aparte para cada transferencia. En modo "
+                        "pasivo es el servidor quien abre un puerto y se lo "
+                        "dice al cliente por la conexión de control."
+                        + (f" En esta misma captura se ve tráfico real en el "
+                           f"puerto {puerto}." if usado else ""),
+                difficulty="dificil", category="Sesión en claro"))
+            break
+
+    # tamaño de archivo anunciado
+    for i, (p, l) in enumerate(lineas):
+        if l.startswith("213 ") and l[4:].strip().isdigit():
+            tam = int(l[4:].strip())
+            previo = next((x for _, x in reversed(lineas[:i])
+                           if x.upper().startswith("SIZE ")), None)
+            if previo:
+                qs.append(Question(
+                    prompt=f"El cliente pregunta «{previo}» y el servidor "
+                           f"contesta «{l}». ¿Cuántos bytes ocupa el archivo?",
+                    kind="text", answer=tam, answer_kind="int",
+                    explain=f"{tam} bytes. El código 213 de FTP devuelve el "
+                            "tamaño pedido con SIZE. Todo el diálogo del "
+                            "protocolo es texto legible: los comandos van en "
+                            "mayúsculas y las respuestas empiezan por un código "
+                            "de tres cifras (2xx correcto, 3xx falta algo, 4xx "
+                            "y 5xx error).",
+                    difficulty="medio", category="Sesión en claro"))
+            break
+
+    # archivo transferido
+    for p, l in lineas:
+        if l.upper().startswith(("RETR ", "STOR ")):
+            nombre = l.split(None, 1)[1]
+            qs.append(Question(
+                prompt=f"¿Qué archivo se transfiere en esta sesión? "
+                       "(escribe el nombre tal cual aparece)",
+                kind="text", answer=nombre, answer_kind="text",
+                explain=f"El paquete #{p.num} lleva «{l}». RETR es descargar y "
+                        "STOR es subir. Sin cifrado, quien capture el tráfico "
+                        "no solo ve el nombre: puede reconstruir el archivo "
+                        "entero juntando los segmentos de la conexión de datos.",
+                difficulty="medio", category="Sesión en claro"))
+            break
+
+    # códigos de respuesta
+    codigos = [int(l[:3]) for _, l in lineas
+               if len(l) > 3 and l[:3].isdigit() and l[3] in " -"]
+    if len(codigos) >= 4:
+        exitos = sum(1 for c in codigos if 200 <= c < 300)
+        qs.append(Question(
+            prompt=f"El servidor manda {len(codigos)} respuestas con código "
+                   "numérico. ¿Cuántas son de la familia 2xx (operación "
+                   "completada con éxito)?",
+            kind="text", answer=exitos, answer_kind="int",
+            explain=f"{exitos} de {len(codigos)}. Los códigos que aparecen son "
+                    + ", ".join(str(c) for c in sorted(set(codigos)))
+                    + ". La primera cifra es la que importa: 1xx en curso, 2xx "
+                      "hecho, 3xx falta un paso más, 4xx error temporal, 5xx "
+                      "error definitivo. HTTP heredó de FTP este esquema.",
+            difficulty="dificil", category="Sesión en claro"))
+    return qs
+
+
+def preguntas_de_captura(pkts: List[Packet], ascii_on: bool) -> List[Question]:
+    """Junta el análisis del conjunto de la captura, sea cual sea su contenido."""
+    qs = []
+    qs.extend(preguntas_rip(pkts, ascii_on))
+    qs.extend(preguntas_ospf(pkts, ascii_on))
+    qs.extend(preguntas_ataque(pkts, ascii_on))
+    qs.extend(preguntas_sesion(pkts, ascii_on))
+    return qs
 
 
 if __name__ == "__main__":

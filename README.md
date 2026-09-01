@@ -60,8 +60,27 @@ Lector propio escrito con `struct`, sin dependencias:
 - `.pcapng`
 - Capa de enlace: Ethernet, loopback BSD (NULL), Linux cooked (SLL), IP crudo
 
-Protocolos que parsea byte a byte: Ethernet, ARP, IPv4, IPv6, ICMP, TCP (con
-sus opciones), UDP, DNS, DHCP/BOOTP y HTTP.
+Protocolos que parsea byte a byte: Ethernet, ARP, IPv4, IPv6, ICMP, IGMP, TCP
+(con sus opciones), UDP, DNS, DHCP/BOOTP, HTTP, **RIPv2** y **OSPFv2**.
+
+## Preguntas derivadas del contenido
+
+Ninguna pregunta está escrita a mano para una captura concreta: todas se
+calculan sobre los paquetes que se cargan. Según lo que encuentre dentro,
+genera además preguntas de análisis del conjunto:
+
+- **RIP** — cuántos routers anuncian rutas, qué red anuncia cada uno y con qué
+  métrica, cuántas redes distintas hay, por qué el TTL es 1, qué significa la
+  métrica 16, cuántos hosts caben en la máscara anunciada.
+- **OSPF** — cuántos Router ID distintos, reparto por tipo de paquete, relación
+  entre hello y dead interval, qué área es, por qué no hay puertos, cuántas LSA
+  se transmiten en total.
+- **Ataques** — tasa real de una inundación calculada de las marcas de tiempo,
+  amplificación por broadcast, qué MAC reclama varias IP, proporción de
+  respuestas ARP no solicitadas, TTL inconsistente como prueba de un relay.
+- **Sesiones en texto plano** — usuario y contraseña de FTP, puerto de datos
+  negociado en modo pasivo, tamaño y nombre del archivo transferido, códigos
+  de respuesta del servidor.
 
 ## Simulador de ventana deslizante
 
