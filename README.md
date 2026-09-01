@@ -10,6 +10,7 @@ hexadecimal de paquetes reales.
 | `hex_dump_quiz.py` | **El principal.** Quiz sobre el hex dump de capturas reales. |
 | `referencia.py` | Panel con el formato de todas las cabeceras y sus offsets. |
 | `ventana_deslizante.py` | Simulador visual de Go-Back-N y Selective Repeat. |
+| `tcp_escenarios.py` | Escenarios TCP aleatorios (SYN/ACK) en tres niveles. |
 | `pcap_quiz.py` | Versión anterior, basada en Scapy y en campos ya interpretados. |
 | `files/` | Capturas `.pcap` y `.pcapng` con las que se juega. |
 
@@ -25,9 +26,10 @@ Elige una captura de `files/` y el menú ofrece:
 2. **Modo estudio** — el hex dump con cada campo mapeado a sus offsets.
 3. **Panel de cabeceras** — se abre en una ventana de terminal a la derecha (macOS).
 4. **Simulador de ventana deslizante** — diagramas de Go-Back-N y Selective Repeat.
+5. **Escenarios TCP aleatorios** — preguntas de SYN/ACK y ventana en tres niveles.
 
-No hace falta instalar nada: `hex_dump_quiz.py`, `referencia.py` y
-`ventana_deslizante.py` usan solo la librería estándar. Solo `pcap_quiz.py`
+No hace falta instalar nada salvo para `pcap_quiz.py`: el resto usa solo la
+librería estándar. Solo `pcap_quiz.py`
 necesita Scapy (`python3 -m pip install scapy`).
 
 ## Qué se practica
@@ -84,3 +86,25 @@ python3 referencia.py --lista  # secciones disponibles
 
 Doce secciones con diagramas estilo RFC, tabla de offsets de cada campo, y
 tablas de valores (EtherTypes, protocolos IP, puertos, tipos ICMP y DNS, ASCII).
+
+## Escenarios TCP aleatorios
+
+```bash
+python3 tcp_escenarios.py            # menú interactivo
+python3 tcp_escenarios.py --dificil  # una ronda de ese nivel
+python3 tcp_escenarios.py --demo     # un escenario con todas sus respuestas
+```
+
+Genera una situación distinta cada vez (handshake, envío de datos, una pérdida,
+la ventana llenándose, cierre con FIN) y pregunta en tres niveles:
+
+- **Fácil** — con el diagrama delante: flags, ISN, por qué el ACK del SYN es ISN+1.
+- **Medio** — con el diagrama: calcular el siguiente seq/ack, ventana real con
+  escala, segmentos que caben en la ventana, ACK duplicados.
+- **Difícil** — **sin diagrama**, solo los parámetros escritos: hay que deducir
+  los números de secuencia, en qué ACK se atasca el receptor tras una pérdida,
+  cuántos segmentos caben antes de bloquearse por ventana llena, y qué seq
+  consume el FIN.
+
+El diagrama y las respuestas se derivan de la misma simulación, así que no
+pueden contradecirse.

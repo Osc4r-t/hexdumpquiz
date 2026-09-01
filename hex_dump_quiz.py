@@ -2442,6 +2442,7 @@ def explorar(paquetes: List[Packet]) -> None:
 
 RUTA_REFERENCIA = Path(__file__).resolve().parent / "referencia.py"
 RUTA_SIMULADOR = Path(__file__).resolve().parent / "ventana_deslizante.py"
+RUTA_TCP = Path(__file__).resolve().parent / "tcp_escenarios.py"
 
 APPLESCRIPT_PANEL = """
 tell application "Finder"
@@ -2508,18 +2509,26 @@ def abrir_panel_referencia() -> None:
           "una sección, o «q» para cerrarlo.")
 
 
-def abrir_simulador() -> None:
-    """Ejecuta el simulador de ventana deslizante en esta misma terminal."""
-    if not RUTA_SIMULADOR.exists():
-        print(f"\nNo encuentro '{RUTA_SIMULADOR.name}' junto a este script.")
+def _lanzar(ruta: Path) -> None:
+    """Ejecuta otro script del proyecto en esta misma terminal."""
+    if not ruta.exists():
+        print(f"\nNo encuentro '{ruta.name}' junto a este script.")
         return
     import runpy
     try:
-        runpy.run_path(str(RUTA_SIMULADOR), run_name="__main__")
+        runpy.run_path(str(ruta), run_name="__main__")
     except (KeyboardInterrupt, EOFError):
         print()
     except SystemExit:
         pass
+
+
+def abrir_simulador() -> None:
+    _lanzar(RUTA_SIMULADOR)
+
+
+def abrir_tcp() -> None:
+    _lanzar(RUTA_TCP)
 
 
 # ---------------------------------------------------------------------------
@@ -2670,6 +2679,8 @@ def main() -> None:
                        "Abrir el panel de cabeceras en una ventana a la derecha",
                        "Simulador de ventana deslizante (Go-Back-N y "
                        "Selective Repeat)",
+                       "Escenarios TCP aleatorios (SYN, ACK y ventana): "
+                       "fácil, medio y difícil",
                        "Cambiar de captura",
                        "Salir"])
         if opcion == 0:
@@ -2681,6 +2692,8 @@ def main() -> None:
         elif opcion == 3:
             abrir_simulador()
         elif opcion == 4:
+            abrir_tcp()
+        elif opcion == 5:
             ruta = elegir_captura()
             try:
                 paquetes = cargar_captura(ruta)
