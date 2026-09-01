@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
 """
-SIMULADOR VISUAL DE VENTANA DESLIZANTE
-======================================
-Dibuja en la terminal qué pasa exactamente en Go-Back-N y en Selective Repeat
-cuando se pierde algo, con diagramas de tiempo (escalera emisor/receptor) y la
-evolución de la ventana paso a paso.
+VISUAL SLIDING WINDOW SIMULATOR
+===============================
+Draws in the terminal exactly what happens in Go-Back-N and in Selective
+Repeat when something is lost, with time diagrams (sender/receiver ladder)
+and the window evolving step by step.
 
-Se puede variar todo: tamaño de ventana, número de paquetes, retardo de
-propagación, temporizador, qué paquete de datos se pierde y qué ACK se pierde.
+Everything can be changed: window size, number of packets, propagation delay,
+timeout, which data packet is lost and which ACK is lost.
 
-Uso:
-    python3 ventana_deslizante.py                menú interactivo
-    python3 ventana_deslizante.py --azar         escenario aleatorio
-    python3 ventana_deslizante.py --comparar     GBN y SR con la misma pérdida
-    python3 ventana_deslizante.py --ejemplos     varios escenarios preparados
+Usage:
+    python3 ventana_deslizante.py                interactive menu
+    python3 ventana_deslizante.py --random       random scenario
+    python3 ventana_deslizante.py --compare      GBN and SR, same loss
+    python3 ventana_deslizante.py --examples     several ready-made scenarios
 
-Desde el juego: opción «Simulador de ventana deslizante» del menú principal.
+From the game: the "Go-Back-N and Selective Repeat simulator" menu option.
 """
 
 import random
@@ -26,23 +26,23 @@ from typing import Dict, List, Optional, Set, Tuple
 
 A = "=" * 74
 B = "-" * 74
-LIMITE_T = 400          # tope de tiempo para que nunca se cuelgue
+LIMITE_T = 400          # time cap so it can never hang
 
 
 # ---------------------------------------------------------------------------
-# Modelo de la simulación
+# Simulation model
 # ---------------------------------------------------------------------------
 
 @dataclass
 class Evento:
     t: int
-    lado: str        # "emisor" | "receptor"
+    lado: str        # "sender" | "receiver"
     texto: str
 
 
 @dataclass
 class Foto:
-    """Estado de la ventana del emisor en un instante."""
+    """State of the sender window at one instant."""
     t: int
     base: int
     transmitidos: Set[int]
@@ -70,7 +70,7 @@ class Resultado:
 
 
 def _min_bits(N: int, protocolo: str) -> int:
-    """Bits de número de secuencia mínimos para esa ventana."""
+    """Minimum sequence-number bits needed for that window size."""
     k = 1
     while k < 16:
         cabe = (2 ** k - 1) if protocolo == "GBN" else (2 ** (k - 1))
@@ -89,15 +89,15 @@ def simular_gbn(total: int, N: int, retardo: int, timeout: int,
     r = Resultado("GBN", total, N, retardo, timeout,
                   set(perder_datos), set(perder_ack))
 
-    base = 0                 # primer paquete no confirmado
-    siguiente = 0            # siguiente número aún no enviado
-    esperado = 0             # lo que espera el receptor
-    cola: List[int] = []     # paquetes esperando su turno de transmisión
-    datos_vuelo: List[Tuple[int, int]] = []   # (t_llegada, seq)
-    acks_vuelo: List[Tuple[int, int]] = []    # (t_llegada, ack acumulativo)
+    base = 0                 # oldest unacknowledged packet
+    siguiente = 0            # next sequence number not yet sent
+    esperado = 0             # what the receiver is expecting
+    cola: List[int] = []     # packets waiting their turn to be sent
+    datos_vuelo: List[Tuple[int, int]] = []   # (arrival_time, seq)
+    acks_vuelo: List[Tuple[int, int]] = []    # (arrival_time, cumulative ack)
     intentos: Dict[int, int] = defaultdict(int)
     intentos_ack: Dict[int, int] = defaultdict(int)
-    t_temporizador: Optional[int] = None      # cuándo vence el timer del base
+    t_temporizador: Optional[int] = None      # when the timer for base expires
     ocupado_hasta = -1
 
     transmitidos: Set[int] = set()
@@ -105,10 +105,10 @@ def simular_gbn(total: int, N: int, retardo: int, timeout: int,
     def foto(t, nota=""):
         r.fotos.append(Foto(t, base, set(transmitidos), set(range(base)), nota))
 
-    foto(0, "arranque")
+    foto(0, "start")
     t = 0
     while base < total and t < LIMITE_T:
-        # --- vence el temporizador: se reenvía TODA la ventana pendiente ---
+        # --- timeout: resend the WHOLE outstanding window ---
         if t_temporizador is not None and t >= t_temporizador and base < total:
             pendientes = list(range(base, siguiente))
             if len(pendientes) > 4:
@@ -116,17 +116,17 @@ def simular_gbn(total: int, N: int, retardo: int, timeout: int,
             else:
                 lista = ", ".join(str(x) for x in pendientes)
             r.eventos.append(Evento(t, "emisor",
-                                    f"TIMEOUT {base} → reenvía {lista}"))
+                                    f"TIMEOUT {base} -> resends {lista}"))
             cola = pendientes
             t_temporizador = None
 
-        # --- alimentar la cola mientras la ventana lo permita ---
+        # --- feed the queue while the window allows it ---
         while siguiente < total and siguiente < base + N and siguiente not in cola:
             if all(siguiente != x for x in cola):
                 cola.append(siguiente)
                 siguiente += 1
 
-        # --- transmitir un paquete (ocupa una unidad de tiempo el canal) ---
+        # --- transmit one packet (takes one time unit on the channel) ---
         if cola and t > ocupado_hasta:
             seq = cola.pop(0)
             intentos[seq] += 1
@@ -136,11 +136,11 @@ def simular_gbn(total: int, N: int, retardo: int, timeout: int,
             ocupado_hasta = t
             transmitidos.add(seq)
             se_pierde = (seq in perder_datos and intentos[seq] == 1)
-            marca = "reenv" if intentos[seq] > 1 else "envía"
+            marca = "resend" if intentos[seq] > 1 else "send"
             foto(t)
             if se_pierde:
                 r.eventos.append(Evento(t, "emisor",
-                                        f"{marca} {seq}  ══✗  SE PIERDE"))
+                                        f"{marca} {seq}  ══✗  LOST"))
             else:
                 r.eventos.append(Evento(t, "emisor",
                                         f"{marca} {seq}  ═══════════►"))
@@ -148,31 +148,31 @@ def simular_gbn(total: int, N: int, retardo: int, timeout: int,
             if t_temporizador is None:
                 t_temporizador = t + timeout
 
-        # --- llegadas al receptor ---
+        # --- arrivals at the receiver ---
         for llegada, seq in [x for x in datos_vuelo if x[0] == t]:
             datos_vuelo.remove((llegada, seq))
             if seq == esperado:
                 esperado += 1
                 r.entregados.append(seq)
                 r.eventos.append(Evento(
-                    t, "receptor", f"recibe {seq} · ENTREGA · ACK {seq}"))
+                    t, "receptor", f"got {seq} · DELIVERS · ACK {seq}"))
             else:
                 r.eventos.append(Evento(
                     t, "receptor",
-                    f"recibe {seq} · DESCARTA · "
-                    + (f"repite ACK {esperado - 1}" if esperado > 0
-                       else "sin ACK aún")))
+                    f"got {seq} · DISCARDS · "
+                    + (f"repeats ACK {esperado - 1}" if esperado > 0
+                       else "no ACK yet")))
             if esperado > 0:
                 ack = esperado - 1
                 intentos_ack[ack] += 1
                 r.acks_enviados += 1
                 if ack in perder_ack and intentos_ack[ack] == 1:
                     r.eventos.append(Evento(t, "receptor",
-                                            f"  ✗══  el ACK {ack} SE PIERDE"))
+                                            f"  ✗══  ACK {ack} IS LOST"))
                 else:
                     acks_vuelo.append((t + retardo, ack))
 
-        # --- llegadas de ACK al emisor ---
+        # --- ACK arrivals at the sender ---
         for llegada, ack in [x for x in acks_vuelo if x[0] == t]:
             acks_vuelo.remove((llegada, ack))
             if ack >= base:
@@ -187,13 +187,13 @@ def simular_gbn(total: int, N: int, retardo: int, timeout: int,
             else:
                 r.eventos.append(Evento(
                     t, "emisor",
-                    f"◄═══════════  ACK {ack} duplicado"))
+                    f"◄═══════════  ACK {ack} duplicate"))
 
         t += 1
 
     r.t_final = t
     r.completado = base >= total
-    foto(t, "fin")
+    foto(t, "end")
     return r
 
 
@@ -209,14 +209,14 @@ def simular_sr(total: int, N: int, retardo: int, timeout: int,
     base = 0
     siguiente = 0
     confirmados: Set[int] = set()
-    rbase = 0                       # base de la ventana del receptor
-    buffer: Set[int] = set()        # recibidos fuera de orden
+    rbase = 0                       # base of the receiver window
+    buffer: Set[int] = set()        # received out of order
     cola: List[int] = []
     datos_vuelo: List[Tuple[int, int]] = []
     acks_vuelo: List[Tuple[int, int]] = []
     intentos: Dict[int, int] = defaultdict(int)
     intentos_ack: Dict[int, int] = defaultdict(int)
-    temporizador: Dict[int, int] = {}     # seq -> instante de vencimiento
+    temporizador: Dict[int, int] = {}     # seq -> expiry time
     ocupado_hasta = -1
 
     transmitidos: Set[int] = set()
@@ -224,14 +224,14 @@ def simular_sr(total: int, N: int, retardo: int, timeout: int,
     def foto(t, nota=""):
         r.fotos.append(Foto(t, base, set(transmitidos), set(confirmados), nota))
 
-    foto(0, "arranque")
+    foto(0, "start")
     t = 0
     while base < total and t < LIMITE_T:
-        # --- temporizadores individuales ---
+        # --- per-packet timers ---
         for seq in sorted(temporizador):
             if temporizador[seq] <= t and seq not in confirmados:
                 r.eventos.append(Evento(
-                    t, "emisor", f"TIMEOUT {seq} → reenvía SOLO el {seq}"))
+                    t, "emisor", f"TIMEOUT {seq} -> resends ONLY {seq}"))
                 if seq not in cola:
                     cola.append(seq)
                 del temporizador[seq]
@@ -250,11 +250,11 @@ def simular_sr(total: int, N: int, retardo: int, timeout: int,
             ocupado_hasta = t
             transmitidos.add(seq)
             se_pierde = (seq in perder_datos and intentos[seq] == 1)
-            marca = "reenv" if intentos[seq] > 1 else "envía"
+            marca = "resend" if intentos[seq] > 1 else "send"
             foto(t)
             if se_pierde:
                 r.eventos.append(Evento(t, "emisor",
-                                        f"{marca} {seq}  ══✗  SE PIERDE"))
+                                        f"{marca} {seq}  ══✗  LOST"))
             else:
                 r.eventos.append(Evento(t, "emisor",
                                         f"{marca} {seq}  ═══════════►"))
@@ -265,7 +265,7 @@ def simular_sr(total: int, N: int, retardo: int, timeout: int,
             datos_vuelo.remove((llegada, seq))
             if seq < rbase:
                 r.eventos.append(Evento(
-                    t, "receptor", f"recibe {seq} · repetido · ACK {seq}"))
+                    t, "receptor", f"got {seq} · duplicate · ACK {seq}"))
             elif seq < rbase + N:
                 buffer.add(seq)
                 if seq == rbase:
@@ -281,21 +281,21 @@ def simular_sr(total: int, N: int, retardo: int, timeout: int,
                         lista = ",".join(str(x) for x in entregar)
                     r.eventos.append(Evento(
                         t, "receptor",
-                        f"recibe {seq} · ENTREGA {lista} · ACK {seq}"))
+                        f"got {seq} · DELIVERS {lista} · ACK {seq}"))
                 else:
                     r.eventos.append(Evento(
                         t, "receptor",
-                        f"recibe {seq} · al BUFFER · ACK {seq}"))
+                        f"got {seq} · BUFFERED · ACK {seq}"))
             else:
                 r.eventos.append(Evento(t, "receptor",
-                                        f"recibe {seq} · fuera de ventana"))
+                                        f"got {seq} · outside the window"))
                 continue
 
             intentos_ack[seq] += 1
             r.acks_enviados += 1
             if seq in perder_ack and intentos_ack[seq] == 1:
                 r.eventos.append(Evento(t, "receptor",
-                                        f"  ✗══  el ACK {seq} SE PIERDE"))
+                                        f"  ✗══  ACK {seq} IS LOST"))
             else:
                 acks_vuelo.append((t + retardo, seq))
 
@@ -303,7 +303,7 @@ def simular_sr(total: int, N: int, retardo: int, timeout: int,
             acks_vuelo.remove((llegada, ack))
             if ack in confirmados:
                 r.eventos.append(Evento(
-                    t, "emisor", f"◄═══════════  ACK {ack} repetido"))
+                    t, "emisor", f"◄═══════════  ACK {ack} repeated"))
                 continue
             confirmados.add(ack)
             temporizador.pop(ack, None)
@@ -313,32 +313,32 @@ def simular_sr(total: int, N: int, retardo: int, timeout: int,
                     base += 1
                 r.eventos.append(Evento(
                     t, "emisor",
-                    f"◄═══════════  ACK {ack} · base {anterior}→{base}"))
-                foto(t, f"ACK {ack} desbloquea")
+                    f"◄═══════════  ACK {ack} · base {anterior}->{base}"))
+                foto(t, f"ACK {ack} unblocks")
             else:
                 r.eventos.append(Evento(
                     t, "emisor",
-                    f"◄═══════════  ACK {ack} · falta el {base}"))
-                foto(t, f"ACK {ack} suelto")
+                    f"◄═══════════  ACK {ack} · {base} still missing"))
+                foto(t, f"lone ACK {ack}")
 
         t += 1
 
     r.t_final = t
     r.completado = base >= total
-    foto(t, "fin")
+    foto(t, "end")
     return r
 
 
 # ---------------------------------------------------------------------------
-# Dibujo
+# Drawing
 # ---------------------------------------------------------------------------
 
 def barra_ventana(total: int, base: int, transmitidos: Set[int],
                   confirmados: Set[int], N: int) -> str:
-    """Una fila con el estado de cada número de secuencia.
+    """One row with the state of every sequence number.
 
-    ▓ confirmado   █ enviado sin confirmar   ▒ dentro de ventana sin enviar
-    ░ fuera de la ventana todavía
+    ▓ acked   █ sent but unacked   ▒ inside the window, not sent yet
+    ░ still outside the window
     """
     celdas = []
     for s in range(total):
@@ -359,11 +359,11 @@ def regla_numeros(total: int) -> str:
 
 
 def dibujar_ventana(r: Resultado) -> str:
-    lineas = ["", "  EVOLUCIÓN DE LA VENTANA DEL EMISOR", B,
-              "    ▓ confirmado    █ enviado sin confirmar",
-              "    ▒ cabe en la ventana, aún sin enviar    ░ fuera de la ventana",
+    lineas = ["", "  SENDER WINDOW OVER TIME", B,
+              "    ▓ acknowledged    █ sent, not yet acknowledged",
+              "    ▒ fits in the window, not sent yet    ░ outside the window",
               "",
-              f"      paquete  {regla_numeros(r.total)}"]
+              f"      packet   {regla_numeros(r.total)}"]
 
     vistas = []
     for f in r.fotos:
@@ -375,8 +375,8 @@ def dibujar_ventana(r: Resultado) -> str:
 
     for _, f, barra in vistas:
         tope = min(f.base + r.N - 1, r.total - 1)
-        detalle = f"base={f.base}" + (f"  ventana=[{f.base}..{tope}]"
-                                      if f.base < r.total else "  completado")
+        detalle = f"base={f.base}" + (f"  window=[{f.base}..{tope}]"
+                                      if f.base < r.total else "  done")
         nota = f"  {f.nota}" if f.nota else ""
         lineas.append(f"      t={f.t:<6} {barra}   {detalle}{nota}")
     return "\n".join(lineas)
@@ -386,7 +386,7 @@ ANCHO_COL = 34
 
 
 def _ajustar(texto: str, ancho: int = ANCHO_COL) -> str:
-    """Recorta si hace falta, para que la escalera nunca se desalinee."""
+    """Truncate if needed, so the ladder never goes out of alignment."""
     if len(texto) <= ancho:
         return texto.ljust(ancho)
     return texto[:ancho - 1] + "…"
@@ -394,8 +394,8 @@ def _ajustar(texto: str, ancho: int = ANCHO_COL) -> str:
 
 def dibujar_escalera(r: Resultado) -> str:
     sep = "  " + "─" * 5 + "┼" + "─" * (ANCHO_COL + 2) + "┼" + "─" * (ANCHO_COL - 2)
-    lineas = ["", "  DIAGRAMA DE TIEMPO", B,
-              f"  {'t':>4} │ {_ajustar('EMISOR')} │ RECEPTOR",
+    lineas = ["", "  TIME DIAGRAM", B,
+              f"  {'t':>4} │ {_ajustar('SENDER')} │ RECEIVER",
               sep]
     ultimo_t = None
     for e in r.eventos:
@@ -416,37 +416,37 @@ def dibujar_resumen(r: Resultado) -> str:
     k = _min_bits(r.N, r.protocolo)
     cabe = (2 ** k - 1) if r.protocolo == "GBN" else 2 ** (k - 1)
     return "\n".join([
-        "", "  RESULTADO", B,
-        f"    transmisiones de datos ....... {r.transmisiones}",
-        f"    de ellas, retransmisiones .... {r.retransmisiones}",
-        f"    paquetes útiles .............. {utiles}",
-        f"    transmisiones desperdiciadas . {desperdicio}",
-        f"    eficiencia ................... {efic:.0f}%  "
-        f"({utiles} útiles de {r.transmisiones} enviadas)",
-        f"    ACK enviados ................. {r.acks_enviados}",
-        f"    tiempo hasta terminar ........ {r.t_final} unidades",
-        f"    entregados en orden .......... "
+        "", "  RESULT", B,
+        f"    data transmissions ........... {r.transmisiones}",
+        f"    of those, retransmissions .... {r.retransmisiones}",
+        f"    useful packets ............... {utiles}",
+        f"    wasted transmissions ......... {desperdicio}",
+        f"    efficiency ................... {efic:.0f}%  "
+        f"({utiles} useful out of {r.transmisiones} sent)",
+        f"    ACKs sent .................... {r.acks_enviados}",
+        f"    time to finish ............... {r.t_final} units",
+        f"    delivered in order ........... "
         + ", ".join(str(x) for x in r.entregados),
         "",
-        f"    Con ventana N={r.N}, este protocolo necesita al menos k={k} bits de",
-        f"    número de secuencia (con {k} bits, {r.protocolo} admite hasta {cabe}).",
+        f"    With window N={r.N} this protocol needs at least k={k} sequence",
+        f"    number bits (with {k} bits, {r.protocolo} allows up to {cabe}).",
     ])
 
 
 def encabezado(r: Resultado) -> str:
     perdidas = []
     if r.perder_datos:
-        perdidas.append("paquete(s) " + ", ".join(str(x) for x in sorted(r.perder_datos)))
+        perdidas.append("packet(s) " + ", ".join(str(x) for x in sorted(r.perder_datos)))
     if r.perder_ack:
         perdidas.append("ACK " + ", ".join(str(x) for x in sorted(r.perder_ack)))
-    texto = " y ".join(perdidas) if perdidas else "nada (canal perfecto)"
+    texto = " and ".join(perdidas) if perdidas else "nothing (perfect channel)"
     nombre = ("GO-BACK-N" if r.protocolo == "GBN" else "SELECTIVE REPEAT")
     return "\n".join([
         "", A,
         f"  {nombre}",
-        f"  ventana N={r.N}   ·   {r.total} paquetes   ·   "
-        f"retardo={r.retardo}   ·   timeout={r.timeout}",
-        f"  se pierde: {texto}",
+        f"  window N={r.N}   ·   {r.total} packets   ·   "
+        f"delay={r.retardo}   ·   timeout={r.timeout}",
+        f"  lost: {texto}",
         A])
 
 
@@ -457,11 +457,11 @@ def mostrar(r: Resultado, con_ventana: bool = True) -> None:
         print(dibujar_ventana(r))
     print(dibujar_resumen(r))
     if not r.completado:
-        print("\n  (la simulación se cortó por el límite de tiempo)")
+        print("\n  (the simulation was cut off by the time limit)")
 
 
 # ---------------------------------------------------------------------------
-# Comparación entre los dos protocolos con el mismo escenario
+# Comparing the two protocols on the same scenario
 # ---------------------------------------------------------------------------
 
 def comparar(total: int, N: int, retardo: int, timeout: int,
@@ -475,13 +475,13 @@ def comparar(total: int, N: int, retardo: int, timeout: int,
         mostrar(sr)
 
     print("\n" + A)
-    print("  MISMA PÉRDIDA, LOS DOS PROTOCOLOS")
+    print("  SAME LOSS, BOTH PROTOCOLS")
     print(A)
     filas = [
-        ("transmisiones de datos", gbn.transmisiones, sr.transmisiones),
-        ("retransmisiones", gbn.retransmisiones, sr.retransmisiones),
-        ("ACK enviados", gbn.acks_enviados, sr.acks_enviados),
-        ("tiempo total", gbn.t_final, sr.t_final),
+        ("data transmissions", gbn.transmisiones, sr.transmisiones),
+        ("retransmissions", gbn.retransmisiones, sr.retransmisiones),
+        ("ACKs sent", gbn.acks_enviados, sr.acks_enviados),
+        ("total time", gbn.t_final, sr.t_final),
     ]
     print(f"    {'':<26} {'Go-Back-N':>12} {'Selective Repeat':>18}")
     print("    " + "-" * 58)
@@ -489,56 +489,55 @@ def comparar(total: int, N: int, retardo: int, timeout: int,
         print(f"    {nombre:<26} {a:>12} {b:>18}")
     ef_g = 100 * total / gbn.transmisiones if gbn.transmisiones else 0
     ef_s = 100 * total / sr.transmisiones if sr.transmisiones else 0
-    print(f"    {'eficiencia':<26} {ef_g:>11.0f}% {ef_s:>17.0f}%")
+    print(f"    {'efficiency':<26} {ef_g:>11.0f}% {ef_s:>17.0f}%")
 
     ahorro = gbn.transmisiones - sr.transmisiones
     print()
     if ahorro > 0:
-        print(f"    Selective Repeat envió {ahorro} paquete(s) menos. Go-Back-N")
-        print("    retransmitió también los que ya habían llegado bien, porque su")
-        print("    receptor los descarta en vez de guardarlos en un buffer.")
+        print(f"    Selective Repeat sent {ahorro} packet(s) fewer. Go-Back-N also")
+        print("    retransmitted the ones that had already arrived fine, because")
+        print("    its receiver discards them instead of buffering them.")
     elif ahorro == 0:
-        print("    Aquí empatan: no había paquetes posteriores al perdido dentro de")
-        print("    la ventana, así que Go-Back-N no llegó a reenviar nada de más.")
+        print("    A tie here: there were no packets after the lost one inside the")
+        print("    window, so Go-Back-N never resent anything extra.")
     else:
-        print(f"    Aquí gana GO-BACK-N por {-ahorro} transmisión(es), y no es un")
-        print("    error: al perderse un ACK se invierte la ventaja.")
-        print("    El ACK de Go-Back-N es ACUMULATIVO, así que el siguiente ACK que")
-        print("    llegue ya confirma también lo que quedó sin confirmar: la pérdida")
-        print("    se repara sola. En Selective Repeat cada ACK confirma un único")
-        print("    paquete, así que si ese ACK se pierde no hay nada que lo cubra y")
-        print("    el temporizador acaba retransmitiendo un paquete que YA había")
-        print("    llegado bien.")
-        print("    Resumen: SR gana cuando se pierden DATOS, GBN aguanta mejor que")
-        print("    se pierdan ACK.")
-    print(f"\n    Bits de secuencia mínimos:  GBN k={_min_bits(N, 'GBN')}   "
-          f"SR k={_min_bits(N, 'SR')}   (para una ventana de {N})")
+        print(f"    GO-BACK-N wins here by {-ahorro} transmission(s), and that is not")
+        print("    a bug: when an ACK is lost the advantage flips over.")
+        print("    Go-Back-N ACKs are CUMULATIVE, so the next ACK that arrives")
+        print("    already confirms whatever was left unconfirmed: the loss heals")
+        print("    itself. In Selective Repeat each ACK confirms a single packet,")
+        print("    so if that ACK is lost nothing covers it and the timer ends up")
+        print("    retransmitting a packet that HAD already arrived fine.")
+        print("    In short: SR wins when DATA is lost, GBN copes better when")
+        print("    ACKs are lost.")
+    print(f"\n    Minimum sequence bits:  GBN k={_min_bits(N, 'GBN')}   "
+          f"SR k={_min_bits(N, 'SR')}   (for a window of {N})")
 
 
 # ---------------------------------------------------------------------------
-# Escenarios preparados y aleatorios
+# Ready-made and random scenarios
 # ---------------------------------------------------------------------------
 
 ESCENARIOS = [
-    ("Ventana pequeña (N=2), se pierde un paquete del medio",
+    ("Small window (N=2), a middle packet is lost",
      dict(total=6, N=2, retardo=3, timeout=9, perder_datos={2}, perder_ack=set())),
-    ("Ventana mediana (N=4), se pierde un paquete del medio",
+    ("Medium window (N=4), a middle packet is lost",
      dict(total=8, N=4, retardo=3, timeout=10, perder_datos={2}, perder_ack=set())),
-    ("Ventana grande (N=6): aquí Go-Back-N sufre de verdad",
+    ("Large window (N=6): this is where Go-Back-N really suffers",
      dict(total=10, N=6, retardo=3, timeout=12, perder_datos={1}, perder_ack=set())),
-    ("Se pierde un ACK, no un paquete de datos",
+    ("An ACK is lost, not a data packet",
      dict(total=8, N=4, retardo=3, timeout=10, perder_datos=set(), perder_ack={1})),
-    ("Se pierde el PRIMER paquete: bloquea toda la ventana",
+    ("The FIRST packet is lost: it blocks the whole window",
      dict(total=8, N=4, retardo=3, timeout=10, perder_datos={0}, perder_ack=set())),
-    ("Se pierde el ÚLTIMO paquete de la tanda",
+    ("The LAST packet of the batch is lost",
      dict(total=6, N=4, retardo=3, timeout=10, perder_datos={5}, perder_ack=set())),
-    ("Dos pérdidas: un paquete y además su ACK",
+    ("Two losses: a packet and also an ACK",
      dict(total=8, N=4, retardo=3, timeout=10, perder_datos={2}, perder_ack={4})),
-    ("Pérdida de ACK con ventana grande: aquí gana Go-Back-N",
+    ("ACK loss with a large window: Go-Back-N wins here",
      dict(total=10, N=6, retardo=3, timeout=10, perder_datos=set(), perder_ack={2})),
-    ("Canal perfecto, sin pérdidas (la referencia)",
+    ("Perfect channel, no losses (the baseline)",
      dict(total=8, N=4, retardo=3, timeout=10, perder_datos=set(), perder_ack=set())),
-    ("Stop-and-wait: la ventana deslizante con N=1",
+    ("Stop-and-wait: the sliding window with N=1",
      dict(total=5, N=1, retardo=3, timeout=9, perder_datos={2}, perder_ack=set())),
 ]
 
@@ -560,7 +559,7 @@ def escenario_azar() -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Interfaz
+# Interface
 # ---------------------------------------------------------------------------
 
 def menu(titulo: str, opciones: List[str]) -> int:
@@ -571,7 +570,7 @@ def menu(titulo: str, opciones: List[str]) -> int:
         bruto = input("> ").strip()
         if bruto.isdigit() and 1 <= int(bruto) <= len(opciones):
             return int(bruto) - 1
-        print(f"Escribe un número entre 1 y {len(opciones)}.")
+        print(f"Type a number between 1 and {len(opciones)}.")
 
 
 def pedir_entero(texto: str, por_defecto: int, minimo: int, maximo: int) -> int:
@@ -585,22 +584,22 @@ def pedir_entero(texto: str, por_defecto: int, minimo: int, maximo: int) -> int:
 
 
 def a_medida() -> dict:
-    print("\nArma tu propio escenario:")
-    total = pedir_entero("  ¿Cuántos paquetes?", 8, 2, 20)
-    N = pedir_entero("  Tamaño de la ventana N", 4, 1, total)
-    retardo = pedir_entero("  Retardo de propagación", 3, 1, 8)
-    timeout = pedir_entero("  Temporizador", 2 * retardo + 4, retardo + 1, 60)
+    print("\nBuild your own scenario:")
+    total = pedir_entero("  How many packets?", 8, 2, 20)
+    N = pedir_entero("  Window size N", 4, 1, total)
+    retardo = pedir_entero("  Propagation delay", 3, 1, 8)
+    timeout = pedir_entero("  Timeout", 2 * retardo + 4, retardo + 1, 60)
 
     perder_datos, perder_ack = set(), set()
-    idx = menu("  ¿Qué se pierde?",
-               ["Un paquete de datos", "Un ACK", "Los dos", "Nada"])
+    idx = menu("  What gets lost?",
+               ["A data packet", "An ACK", "Both", "Nothing"])
     if idx in (0, 2):
-        d = pedir_entero(f"  ¿Qué paquete se pierde? (0 a {total - 1}, "
-                         "-1 = al azar)", -1, -1, total - 1)
+        d = pedir_entero(f"  Which packet is lost? (0 to {total - 1}, "
+                         "-1 = random)", -1, -1, total - 1)
         perder_datos = {random.randrange(0, total) if d < 0 else d}
     if idx in (1, 2):
-        a = pedir_entero(f"  ¿Qué ACK se pierde? (0 a {total - 1}, "
-                         "-1 = al azar)", -1, -1, total - 1)
+        a = pedir_entero(f"  Which ACK is lost? (0 to {total - 1}, "
+                         "-1 = random)", -1, -1, total - 1)
         perder_ack = {random.randrange(0, total) if a < 0 else a}
 
     return dict(total=total, N=N, retardo=retardo, timeout=timeout,
@@ -618,20 +617,20 @@ def ejecutar(cfg: dict, cual: str = "ambos") -> None:
 
 def interactivo() -> None:
     print(A)
-    print("  SIMULADOR DE VENTANA DESLIZANTE  ·  Go-Back-N y Selective Repeat")
+    print("  SLIDING WINDOW SIMULATOR  ·  Go-Back-N and Selective Repeat")
     print(A)
-    print("  Dibuja el diagrama de tiempo emisor/receptor y cómo se desliza la")
-    print("  ventana, para ver qué reenvía cada protocolo cuando algo se pierde.")
+    print("  Draws the sender/receiver time diagram and how the window slides,")
+    print("  so you can see what each protocol resends when something is lost.")
 
     while True:
-        idx = menu("¿Qué quieres ver?",
-                   ["Comparar los dos con un escenario preparado",
-                    "Escenario al azar",
-                    "Escenario a medida (elijo yo los parámetros)",
-                    "Solo Go-Back-N (escenario preparado)",
-                    "Solo Selective Repeat (escenario preparado)",
-                    "Recorrer todos los escenarios preparados",
-                    "Salir"])
+        idx = menu("What do you want to see?",
+                   ["Compare both on a ready-made scenario",
+                    "Random scenario",
+                    "Custom scenario (I choose the parameters)",
+                    "Go-Back-N only (ready-made scenario)",
+                    "Selective Repeat only (ready-made scenario)",
+                    "Walk through every ready-made scenario",
+                    "Quit"])
 
         if idx == 6:
             return
@@ -650,11 +649,11 @@ def interactivo() -> None:
                 print(f"#  {nombre}")
                 print("#" * 74)
                 comparar(**cfg, con_diagramas=False)
-                if input("\nEnter para el siguiente, «q» para parar: ").strip().lower() == "q":
+                if input("\nEnter for the next one, \"q\" to stop: ").strip().lower() == "q":
                     break
             continue
 
-        j = menu("Elige el escenario:", [n for n, _ in ESCENARIOS])
+        j = menu("Pick the scenario:", [n for n, _ in ESCENARIOS])
         cfg = ESCENARIOS[j][1]
         ejecutar(cfg, {0: "ambos", 3: "gbn", 4: "sr"}[idx])
 
@@ -664,11 +663,11 @@ def main() -> None:
     if not args:
         interactivo()
         return
-    if "--azar" in args:
+    if "--random" in args:
         ejecutar(escenario_azar())
-    elif "--comparar" in args:
+    elif "--compare" in args:
         comparar(**ESCENARIOS[1][1])
-    elif "--ejemplos" in args:
+    elif "--examples" in args:
         for nombre, cfg in ESCENARIOS:
             print("\n\n" + "#" * 74)
             print(f"#  {nombre}")
