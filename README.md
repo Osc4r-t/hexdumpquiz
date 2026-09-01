@@ -20,7 +20,22 @@ hexadecimal de paquetes reales.
 python3 hex_dump_quiz.py
 ```
 
-Elige una captura de `files/` y el menú ofrece:
+Al arrancar lee **todas** las capturas de `files/` de golpe y las reparte por
+tema, para que elijas qué protocolo practicar en lugar de qué archivo abrir:
+
+```
+  2) ARP                            165 paquetes en 10 capturas
+  6) TCP                            116 paquetes en 3 capturas
+ 10) RIP                            100 paquetes en 1 captura
+ 11) OSPF                           616 paquetes en 1 captura
+ 15) Seguridad y ataques          15419 paquetes en 10 capturas
+```
+
+Los temas son Ethernet, ARP, IPv4, IPv6, ICMP, TCP, UDP, DNS, DHCP, RIP, OSPF,
+IGMP, enrutamiento (RIP+OSPF juntos), aplicación en texto plano y seguridad.
+También se puede elegir una captura concreta, o mezclarlo todo.
+
+Elegido el tema, el menú ofrece:
 
 1. **Jugar** — preguntas sobre el volcado.
 2. **Modo estudio** — el hex dump con cada campo mapeado a sus offsets.

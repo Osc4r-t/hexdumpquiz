@@ -2454,25 +2454,27 @@ def mostrar_anotado(pkt: Packet) -> None:
     print(RULE)
 
 
-def explorar(paquetes: List[Packet]) -> None:
-    """Navegar la captura y estudiar paquetes concretos sin puntaje."""
-    print("\nModo estudio. Escribe un número de paquete, «l» para listar, "
-          "o Enter para volver.")
+def explorar(col: "Coleccion") -> None:
+    """Recorrer los paquetes del tema y verlos anotados byte a byte."""
+    lista = col.paquetes
+    print(f"\nModo estudio · {col.tema} · {len(lista)} paquetes.")
+    print("Escribe un número de la lista, «l» para listar, o Enter para volver.")
     while True:
         bruto = input("\npaquete> ").strip().lower()
         if not bruto:
             return
         if bruto == "l":
-            for p in paquetes[:60]:
-                print(f"  {p.resumen()}")
-            if len(paquetes) > 60:
-                print(f"  ... y {len(paquetes) - 60} más")
+            for i, p in enumerate(lista[:60], 1):
+                print(f"  {i:>4}  {p.resumen()}")
+            if len(lista) > 60:
+                print(f"  ... y {len(lista) - 60} más")
             continue
         n = a_entero(bruto)
-        if n is None or not (1 <= n <= len(paquetes)):
-            print(f"Escribe un número entre 1 y {len(paquetes)}.")
+        if n is None or not (1 <= n <= len(lista)):
+            print(f"Escribe un número entre 1 y {len(lista)}.")
             continue
-        mostrar_anotado(paquetes[n - 1])
+        mostrar_anotado(lista[n - 1])
+
 
 
 # ---------------------------------------------------------------------------
@@ -2571,6 +2573,179 @@ def abrir_tcp() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Temas: en vez de elegir un archivo, se elige QUÉ se quiere practicar
+# ---------------------------------------------------------------------------
+
+@dataclass
+class Coleccion:
+    """Los paquetes de un tema, reunidos de todas las capturas que lo tengan."""
+    tema: str
+    descripcion: str
+    paquetes: List[Packet] = field(default_factory=list)
+    # captura completa de cada archivo que aporta algo: las preguntas de
+    # secuencia y de análisis necesitan el contexto entero, no paquetes sueltos
+    por_archivo: Dict[str, List[Packet]] = field(default_factory=dict)
+
+    @property
+    def archivos(self) -> List[str]:
+        return sorted(self.por_archivo)
+
+
+def _tiene(*capas):
+    return lambda p: bool(set(capas) & set(p.layers))
+
+
+def _es_texto(p: Packet) -> bool:
+    if "TCP" not in p.layers or len(p.payload) < 4:
+        return False
+    legible = sum(1 for b in p.payload if 32 <= b <= 126 or b in (13, 10))
+    return legible >= len(p.payload) * 0.9
+
+
+def _es_ataque(p: Packet) -> bool:
+    """Paquetes que por sí solos delatan algo raro."""
+    if p.info.get("arp_oper") == 2:
+        return True
+    if p.info.get("icmp_type") == 8:
+        d = p.info.get("dst_ip", "")
+        if d.endswith(".255") or d == "255.255.255.255":
+            return True
+    if p.info.get("tcp_syn") == 1 and p.info.get("tcp_ack") == 0:
+        return True
+    return False
+
+
+TEMAS = [
+    ("Ethernet y capa 2", "MAC origen y destino, EtherType, broadcast",
+     _tiene("Ethernet", "Loopback", "Linux SLL")),
+    ("ARP", "resolución IP a MAC, gratuitous ARP, spoofing", _tiene("ARP")),
+    ("IPv4", "versión, IHL, TTL, fragmentación, checksum", _tiene("IPv4")),
+    ("IPv6", "cabecera fija de 40 bytes, next header, hop limit", _tiene("IPv6")),
+    ("ICMP", "tipos y códigos, ping, destino inalcanzable, TTL agotado",
+     _tiene("ICMP")),
+    ("TCP", "puertos, seq y ack, flags, ventana, opciones", _tiene("TCP")),
+    ("UDP", "cabecera de 8 bytes, longitud, checksum opcional", _tiene("UDP")),
+    ("DNS", "transaction ID, flags, nombres codificados con longitudes",
+     _tiene("DNS")),
+    ("DHCP", "ciclo DORA, yiaddr, magic cookie, opción 53", _tiene("DHCP")),
+    ("RIP", "vector distancia, métricas, redes anunciadas, métrica 16",
+     _tiene("RIP")),
+    ("OSPF", "estado de enlace, Hello, áreas, LSA, DR y BDR", _tiene("OSPF")),
+    ("IGMP", "grupos multicast, Query y Report", _tiene("IGMP")),
+    ("Enrutamiento (RIP + OSPF)", "comparar vector distancia con estado de enlace",
+     _tiene("RIP", "OSPF")),
+    ("Aplicación en texto plano", "FTP y HTTP legibles en la columna ASCII",
+     _es_texto),
+    ("Seguridad y ataques", "ARP spoofing, floods, escaneos, MITM", _es_ataque),
+]
+
+
+def cargar_todas(mostrar: bool = True) -> Dict[str, List[Packet]]:
+    """Lee de una vez todas las capturas de la carpeta 'files'."""
+    if not FILES_DIR.is_dir():
+        print(f"\nNo existe la carpeta '{FILES_DIR}'.")
+        sys.exit(1)
+    archivos = sorted(FILES_DIR.glob("*.pcap")) + sorted(FILES_DIR.glob("*.pcapng"))
+    if not archivos:
+        print(f"\nNo encontré capturas en '{FILES_DIR}'.")
+        sys.exit(1)
+
+    capturas: Dict[str, List[Packet]] = {}
+    problemas = []
+    for ruta in archivos:
+        try:
+            capturas[ruta.name] = cargar_captura(ruta)
+        except Exception as e:
+            problemas.append(f"{ruta.name}: {e}")
+    if not capturas:
+        print("No pude leer ninguna captura.")
+        sys.exit(1)
+    if mostrar:
+        total = sum(len(v) for v in capturas.values())
+        print(f"\n{len(capturas)} capturas leídas, {total} paquetes en total.")
+        for x in problemas:
+            print(f"  (no pude leer {x})")
+    return capturas
+
+
+def indexar(capturas: Dict[str, List[Packet]]) -> List[Coleccion]:
+    """Reparte los paquetes de todas las capturas entre los temas."""
+    colecciones = []
+    for nombre, desc, cumple in TEMAS:
+        col = Coleccion(nombre, desc)
+        for archivo, pkts in capturas.items():
+            elegidos = [p for p in pkts if cumple(p)]
+            if elegidos:
+                col.paquetes.extend(elegidos)
+                col.por_archivo[archivo] = pkts
+        if col.paquetes:
+            colecciones.append(col)
+    return colecciones
+
+
+def elegir_tema(colecciones: List[Coleccion]):
+    """Devuelve una Coleccion, None para elegir archivo, o False para salir."""
+    print("\n" + RULE)
+    print("  ¿QUÉ QUIERES PRACTICAR?")
+    print(RULE)
+    for i, c in enumerate(colecciones, 1):
+        n = len(c.por_archivo)
+        print(f"  {i:>2}) {c.tema:<27} {len(c.paquetes):>6} paquetes en "
+              f"{n} {'captura' if n == 1 else 'capturas'}")
+        print(f"      {c.descripcion}")
+    print(f"  {len(colecciones) + 1:>2}) Todo mezclado")
+    print(f"  {len(colecciones) + 2:>2}) Elegir una captura concreta")
+    print(f"  {len(colecciones) + 3:>2}) Salir")
+
+    while True:
+        bruto = input("> ").strip()
+        if bruto.isdigit():
+            n = int(bruto)
+            if 1 <= n <= len(colecciones):
+                return colecciones[n - 1]
+            if n == len(colecciones) + 1:
+                todo = Coleccion("Todo mezclado", "paquetes de todas las capturas")
+                for c in colecciones:
+                    todo.por_archivo.update(c.por_archivo)
+                for pkts in todo.por_archivo.values():
+                    todo.paquetes.extend(pkts)
+                return todo
+            if n == len(colecciones) + 2:
+                return None
+            if n == len(colecciones) + 3:
+                return False
+        print(f"Escribe un número entre 1 y {len(colecciones) + 3}.")
+
+
+def armar_pool_tema(col: Coleccion, dificultad: str, ascii_on: bool,
+                    por_paquete: int = 3) -> List[Question]:
+    """Preguntas del tema, con paquetes de todas las capturas que lo contengan."""
+    utiles = [p for p in col.paquetes if len(p.fields) >= 4] or col.paquetes
+    muestra = random.sample(utiles, k=min(14, len(utiles)))
+
+    pool: List[Question] = []
+    for p in muestra:
+        pool.extend(preguntas_de_campos(p, ascii_on, dificultad, por_paquete))
+        pool.extend(preguntas_calculadas(p, ascii_on))
+
+    # secuencias y análisis se hacen POR CAPTURA: mezclar paquetes de archivos
+    # distintos inventaría conversaciones que nunca existieron
+    for pkts in col.por_archivo.values():
+        pool.extend(preguntas_de_secuencia(pkts))
+        pool.extend(preguntas_de_captura(pkts, ascii_on))
+
+    pool.extend(preguntas_ventana(col.paquetes, ascii_on))
+    pool.extend(preguntas_gbn_sr())
+
+    if dificultad != "mixto":
+        filtrado = [q for q in pool if q.difficulty == dificultad]
+        if filtrado:
+            pool = filtrado
+    random.shuffle(pool)
+    return pool
+
+
+# ---------------------------------------------------------------------------
 # Menús y flujo principal
 # ---------------------------------------------------------------------------
 
@@ -2599,34 +2774,15 @@ def elegir_captura() -> Path:
     return candidatos[idx]
 
 
-def armar_pool(paquetes: List[Packet], dificultad: str, ascii_on: bool,
-               por_paquete: int = 3) -> List[Question]:
-    """Junta preguntas de todas las familias, con el hex dump al frente."""
-    utiles = [p for p in paquetes if len(p.fields) >= 4]
-    if not utiles:
-        utiles = paquetes
+def jugar(col: "Coleccion") -> None:
+    print(f"\n{RULE}\n  {col.tema.upper()}  ·  {len(col.paquetes)} paquetes")
+    if len(col.por_archivo) > 1:
+        print(f"  reunidos de {len(col.archivos)} capturas: "
+              f"{', '.join(col.archivos)}")
+    else:
+        print(f"  de: {col.archivos[0]}")
+    print(RULE)
 
-    muestra = random.sample(utiles, k=min(12, len(utiles)))
-    pool: List[Question] = []
-
-    for p in muestra:
-        pool.extend(preguntas_de_campos(p, ascii_on, dificultad, por_paquete))
-        pool.extend(preguntas_calculadas(p, ascii_on))
-
-    pool.extend(preguntas_de_secuencia(paquetes))
-    pool.extend(preguntas_de_captura(paquetes, ascii_on))
-    pool.extend(preguntas_ventana(paquetes, ascii_on))
-    pool.extend(preguntas_gbn_sr())
-
-    if dificultad != "mixto":
-        filtrado = [q for q in pool if q.difficulty == dificultad]
-        if filtrado:
-            pool = filtrado
-    random.shuffle(pool)
-    return pool
-
-
-def jugar(paquetes: List[Packet]) -> None:
     dificultad = ["facil", "medio", "dificil", "mixto"][
         menu("Dificultad:", ["Fácil (campos directos: MACs, IPs, puertos, TTL)",
                              "Medio (longitudes, checksums, flags, DNS)",
@@ -2635,7 +2791,7 @@ def jugar(paquetes: List[Packet]) -> None:
     ascii_on = menu("Volcado hexadecimal:",
                     ["Hex + ASCII (recomendado)", "Solo hex"]) == 0
 
-    pool = armar_pool(paquetes, dificultad, ascii_on)
+    pool = armar_pool_tema(col, dificultad, ascii_on)
     if not pool:
         print("No hay preguntas para esa combinación. Prueba con «Mixta».")
         return
@@ -2681,6 +2837,21 @@ def jugar(paquetes: List[Packet]) -> None:
         print("\nUsa el modo estudio: mira paquetes anotados antes de jugar.")
 
 
+
+def coleccion_de_archivo(capturas: Dict[str, List[Packet]]
+                        ) -> Optional["Coleccion"]:
+    """La opción de siempre: practicar con una sola captura."""
+    nombres = sorted(capturas)
+    idx = menu("Capturas disponibles:", nombres + ["Volver"])
+    if idx == len(nombres):
+        return None
+    nombre = nombres[idx]
+    col = Coleccion(nombre, "todos los paquetes de esta captura")
+    col.paquetes = capturas[nombre]
+    col.por_archivo = {nombre: capturas[nombre]}
+    return col
+
+
 def main() -> None:
     print(RULE)
     print("HEX DUMP QUIZ - lectura de paquetes byte a byte")
@@ -2689,31 +2860,26 @@ def main() -> None:
     print("en qué offset vive cada uno, cómo se decodifican esos bytes, qué")
     print("significan, y qué está ocurriendo en secuencias de 3 a 6 paquetes.")
 
-    ruta = elegir_captura()
-    print(f"\nLeyendo '{ruta.name}' ...")
-    try:
-        paquetes = cargar_captura(ruta)
-    except CaptureError as e:
-        print(f"No pude leer la captura: {e}")
-        sys.exit(1)
-    except Exception as e:
-        print(f"Error inesperado al leer el archivo: {e}")
+    capturas = cargar_todas()
+    colecciones = indexar(capturas)
+    if not colecciones:
+        print("No pude interpretar ningún paquete de las capturas.")
         sys.exit(1)
 
-    if not paquetes:
-        print("La captura no tiene paquetes.")
-        sys.exit(1)
-
-    formato = paquetes[0].info.get("_formato", "pcap")
-    enlace = LINKTYPES.get(paquetes[0].linktype, "desconocido")
-    capas = Counter("/".join(p.layers) or "sin identificar" for p in paquetes)
-    print(f"\n{len(paquetes)} paquetes  |  formato: {formato}  |  "
-          f"capa de enlace: {enlace}")
-    for combo, veces in capas.most_common(6):
-        print(f"  {veces:6}  {combo}")
-
+    col = None
     while True:
-        opcion = menu("¿Qué quieres hacer?",
+        if col is None:
+            elegido = elegir_tema(colecciones)
+            if elegido is False:
+                print("\nHasta la próxima.")
+                return
+            if elegido is None:
+                elegido = coleccion_de_archivo(capturas)
+                if elegido is None:
+                    continue
+            col = elegido
+
+        opcion = menu(f"[{col.tema}]  ¿Qué quieres hacer?",
                       ["Jugar",
                        "Modo estudio (ver un paquete anotado byte a byte)",
                        "Abrir el panel de cabeceras en una ventana a la derecha",
@@ -2721,12 +2887,12 @@ def main() -> None:
                        "Selective Repeat)",
                        "Escenarios TCP aleatorios (SYN, ACK y ventana): "
                        "fácil, medio y difícil",
-                       "Cambiar de captura",
+                       "Cambiar de tema o de captura",
                        "Salir"])
         if opcion == 0:
-            jugar(paquetes)
+            jugar(col)
         elif opcion == 1:
-            explorar(paquetes)
+            explorar(col)
         elif opcion == 2:
             abrir_panel_referencia()
         elif opcion == 3:
@@ -2734,16 +2900,10 @@ def main() -> None:
         elif opcion == 4:
             abrir_tcp()
         elif opcion == 5:
-            ruta = elegir_captura()
-            try:
-                paquetes = cargar_captura(ruta)
-                print(f"Cargados {len(paquetes)} paquetes de '{ruta.name}'.")
-            except Exception as e:
-                print(f"No pude leer la captura: {e}")
+            col = None
         else:
             print("\nHasta la próxima.")
             return
-
 
 
 
