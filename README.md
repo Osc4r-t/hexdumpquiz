@@ -38,10 +38,16 @@ También se puede elegir una captura concreta, o mezclarlo todo.
 Elegido el tema, el menú ofrece:
 
 1. **Jugar** — preguntas sobre el volcado.
-2. **Modo estudio** — el hex dump con cada campo mapeado a sus offsets.
-3. **Panel de cabeceras** — se abre en una ventana de terminal a la derecha (macOS).
-4. **Simulador de ventana deslizante** — diagramas de Go-Back-N y Selective Repeat.
-5. **Escenarios TCP aleatorios** — preguntas de SYN/ACK y ventana en tres niveles.
+2. **Escenarios TCP aleatorios** — preguntas de SYN/ACK y ventana en tres niveles.
+3. **Simulador Go-Back-N y Selective Repeat** — diagramas de tiempo y ventana.
+4. **Guía de referencia** — se abre en una ventana de terminal a la derecha (macOS).
+
+Durante una partida, en vez de responder se puede escribir:
+
+- `form` — abre la guía completa en otra ventana
+- `form tcp`, `form gbn`, `form teoriarip`… — imprime esa sección ahí mismo
+
+En los dos casos la pregunta sigue esperando después.
 
 No hace falta instalar nada salvo para `pcap_quiz.py`: el resto usa solo la
 librería estándar. Solo `pcap_quiz.py`

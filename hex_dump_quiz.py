@@ -1204,6 +1204,39 @@ def coincide(respuesta: str, esperado: Any, kind: str = "int") -> bool:
     return normalizar(r) == normalizar(esperado)
 
 
+COMANDOS_AYUDA = ("form", "formulario", "guia", "guía", "ayuda", "?")
+
+
+def _consultar_guia(argumento: str = "") -> None:
+    """Abre la guía de referencia sin perder la pregunta en curso."""
+    if not argumento:
+        abrir_panel_referencia()
+        return
+    # con un nombre de sección detrás, se imprime aquí mismo sin abrir ventana
+    import subprocess
+    if not RUTA_REFERENCIA.exists():
+        print(f"  No encuentro '{RUTA_REFERENCIA.name}'.")
+        return
+    r = subprocess.run([sys.executable, str(RUTA_REFERENCIA), argumento],
+                       capture_output=True, text=True)
+    print(r.stdout or r.stderr)
+
+
+def leer_respuesta(prompt: str) -> str:
+    """Pide la respuesta, atendiendo antes los comandos de ayuda.
+
+    Escribir «form» abre la guía en una ventana aparte; «form tcp» imprime esa
+    sección aquí mismo. La pregunta sigue esperando después.
+    """
+    while True:
+        bruto = input(prompt).strip()
+        partes = bruto.lower().split(None, 1)
+        if partes and partes[0] in COMANDOS_AYUDA:
+            _consultar_guia(partes[1].strip() if len(partes) > 1 else "")
+            continue
+        return bruto
+
+
 @dataclass
 class Question:
     prompt: str
@@ -1228,12 +1261,12 @@ class Question:
             letras = "ABCDEFGH"
             for i, opt in enumerate(self.options):
                 print(f"  {letras[i]}) {opt}")
-            bruto = input("Tu respuesta (letra): ").strip().upper()
+            bruto = leer_respuesta("Tu respuesta (letra): ").upper()
             ok = (bruto in letras[:len(self.options)]
                   and letras.index(bruto) == self.answer)
             correcta = f"{letras[self.answer]}) {self.options[self.answer]}"
         else:
-            bruto = input("Tu respuesta: ").strip()
+            bruto = leer_respuesta("Tu respuesta: ")
             ok = coincide(bruto, self.answer, self.answer_kind)
             correcta = str(self.answer)
 
@@ -2420,62 +2453,6 @@ def preguntas_gbn_sr() -> List[Question]:
 
 
 # ---------------------------------------------------------------------------
-# Modo estudio: el volcado explicado campo por campo
-# ---------------------------------------------------------------------------
-
-def mostrar_anotado(pkt: Packet) -> None:
-    """Imprime el paquete con cada campo mapeado a sus bytes."""
-    print("\n" + RULE)
-    print(f"PAQUETE #{pkt.num} ANOTADO   ({len(pkt.raw)} bytes  |  "
-          f"{' / '.join(pkt.layers) or 'sin identificar'})")
-    print(RULE)
-    print(hex_dump(pkt.raw, with_ascii=True))
-    print(RULE)
-
-    capa_actual = None
-    for f in sorted(pkt.fields, key=lambda x: (x.offset, x.size)):
-        if f.layer != capa_actual:
-            capa_actual = f.layer
-            print(f"\n  --- {capa_actual} ---")
-        crudo = f.hex(pkt.raw)
-        if len(crudo) > 26:
-            crudo = crudo[:23] + "..."
-        print(f"  {f.rango():<15} {crudo:<26} {f.label:<26} = {f.display}")
-
-    if pkt.payload:
-        print(f"\n  --- Payload ---")
-        print(f"  desde {off(pkt.payload_offset)}, {len(pkt.payload)} bytes")
-        print(f"  ASCII: {safe_ascii(pkt.payload)[:200]}")
-
-    ck = checksum_valido(pkt)
-    if ck is not None:
-        print(f"\n  Checksum IPv4 recalculado: "
-              f"{'correcto' if ck else 'NO cuadra (posible offloading)'}")
-    print(RULE)
-
-
-def explorar(col: "Coleccion") -> None:
-    """Recorrer los paquetes del tema y verlos anotados byte a byte."""
-    lista = col.paquetes
-    print(f"\nModo estudio · {col.tema} · {len(lista)} paquetes.")
-    print("Escribe un número de la lista, «l» para listar, o Enter para volver.")
-    while True:
-        bruto = input("\npaquete> ").strip().lower()
-        if not bruto:
-            return
-        if bruto == "l":
-            for i, p in enumerate(lista[:60], 1):
-                print(f"  {i:>4}  {p.resumen()}")
-            if len(lista) > 60:
-                print(f"  ... y {len(lista) - 60} más")
-            continue
-        n = a_entero(bruto)
-        if n is None or not (1 <= n <= len(lista)):
-            print(f"Escribe un número entre 1 y {len(lista)}.")
-            continue
-        mostrar_anotado(lista[n - 1])
-
-
 
 # ---------------------------------------------------------------------------
 # Panel de referencia en una ventana aparte, anclada a la derecha
@@ -2689,10 +2666,7 @@ def elegir_tema(colecciones: List[Coleccion]):
     print("  ¿QUÉ QUIERES PRACTICAR?")
     print(RULE)
     for i, c in enumerate(colecciones, 1):
-        n = len(c.por_archivo)
-        print(f"  {i:>2}) {c.tema:<27} {len(c.paquetes):>6} paquetes en "
-              f"{n} {'captura' if n == 1 else 'capturas'}")
-        print(f"      {c.descripcion}")
+        print(f"  {i:>2}) {c.tema}")
     print(f"  {len(colecciones) + 1:>2}) Todo mezclado")
     print(f"  {len(colecciones) + 2:>2}) Elegir una captura concreta")
     print(f"  {len(colecciones) + 3:>2}) Salir")
@@ -2715,6 +2689,7 @@ def elegir_tema(colecciones: List[Coleccion]):
             if n == len(colecciones) + 3:
                 return False
         print(f"Escribe un número entre 1 y {len(colecciones) + 3}.")
+
 
 
 def armar_pool_tema(col: Coleccion, dificultad: str, ascii_on: bool,
@@ -2802,8 +2777,12 @@ def jugar(col: "Coleccion") -> None:
         n = 10
     n = max(1, min(n, len(pool)))
 
-    print(f"\n{RULE}\nEmpezamos: {n} preguntas ({DIFFICULTY_LABELS[dificultad]})"
-          f"\n{RULE}")
+    print(f"\n{RULE}\nEmpezamos: {n} preguntas ({DIFFICULTY_LABELS[dificultad]})")
+    print("En cualquier momento puedes escribir «form» para abrir la guía en "
+          "otra ventana,")
+    print("o «form tcp», «form gbn», «form teoriarip»... para ver una sección "
+          "aquí mismo.")
+    print(RULE)
 
     aciertos = 0
     fallos: List[Question] = []
@@ -2881,25 +2860,20 @@ def main() -> None:
 
         opcion = menu(f"[{col.tema}]  ¿Qué quieres hacer?",
                       ["Jugar",
-                       "Modo estudio (ver un paquete anotado byte a byte)",
-                       "Abrir el panel de cabeceras en una ventana a la derecha",
-                       "Simulador de ventana deslizante (Go-Back-N y "
-                       "Selective Repeat)",
-                       "Escenarios TCP aleatorios (SYN, ACK y ventana): "
-                       "fácil, medio y difícil",
+                       "Escenarios TCP aleatorios (SYN, ACK y ventana)",
+                       "Simulador Go-Back-N y Selective Repeat",
+                       "Abrir la guía de referencia en una ventana",
                        "Cambiar de tema o de captura",
                        "Salir"])
         if opcion == 0:
             jugar(col)
         elif opcion == 1:
-            explorar(col)
-        elif opcion == 2:
-            abrir_panel_referencia()
-        elif opcion == 3:
-            abrir_simulador()
-        elif opcion == 4:
             abrir_tcp()
-        elif opcion == 5:
+        elif opcion == 2:
+            abrir_simulador()
+        elif opcion == 3:
+            abrir_panel_referencia()
+        elif opcion == 4:
             col = None
         else:
             print("\nHasta la próxima.")
