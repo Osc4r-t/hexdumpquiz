@@ -118,8 +118,23 @@ python3 referencia.py tcp      # una sección
 python3 referencia.py --lista  # secciones disponibles
 ```
 
-Doce secciones con diagramas estilo RFC, tabla de offsets de cada campo, y
+Veinte secciones, en dos mitades.
+
+**Cabeceras**: diagramas estilo RFC con la tabla de offsets de cada campo, para
+Ethernet, ARP, IPv4, IPv6, ICMP, TCP, UDP, DNS, DHCP, RIPv2 y OSPFv2, más las
 tablas de valores (EtherTypes, protocolos IP, puertos, tipos ICMP y DNS, ASCII).
+
+**Teoría en formato de formulario** — «ante este evento, esto es lo que hay que
+hacer»:
+
+| Sección | Contenido |
+|---|---|
+| `teoriarip` | Vector distancia, los cuatro temporizadores, cuenta a infinito, split horizon, poison reverse, y qué hace el router ante cada evento |
+| `teoriaospf` | Estado de enlace, las tres tablas, los cinco tipos de paquete, los siete estados de adyacencia, requisitos para ser vecinos, elección de DR/BDR, tipos de LSA |
+| `gbn` | Variables del emisor y del receptor, y la tabla evento → acción de cada uno |
+| `sr` | Lo mismo para Selective Repeat, incluida la regla de reconfirmar por debajo de `rcv_base` |
+| `tcpreal` | Qué hace TCP en realidad: qué toma de GBN, qué de SR, cálculo del RTO, las tres fases del control de congestión |
+| `formulario` | Todas las fórmulas juntas y una guía de qué aplicar en cada situación |
 
 ## Escenarios TCP aleatorios
 
