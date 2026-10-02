@@ -11,6 +11,7 @@ hexadecimal de paquetes reales.
 | `referencia.py` | Panel con el formato de todas las cabeceras y sus offsets. |
 | `ventana_deslizante.py` | Simulador visual de Go-Back-N y Selective Repeat. |
 | `tcp_escenarios.py` | Escenarios TCP aleatorios (SYN/ACK) en tres niveles. |
+| `owasp.py` | OWASP Top 10: captura de ataques web, definiciones y casos. |
 | `pcap_quiz.py` | Versión anterior, basada en Scapy y en campos ya interpretados. |
 | `files/` | Capturas `.pcap` y `.pcapng` con las que se juega. |
 
@@ -40,7 +41,8 @@ Elegido el tema, el menú ofrece:
 1. **Jugar** — preguntas sobre el volcado.
 2. **Escenarios TCP aleatorios** — preguntas de SYN/ACK y ventana en tres niveles.
 3. **Simulador Go-Back-N y Selective Repeat** — diagramas de tiempo y ventana.
-4. **Guía de referencia** — se abre en una ventana de terminal a la derecha (macOS).
+4. **OWASP Top 10** — seguridad de aplicaciones web, en tres modos (ver abajo).
+5. **Guía de referencia** — se abre en una ventana de terminal a la derecha (macOS).
 
 Durante una partida, en vez de responder se puede escribir:
 
@@ -102,6 +104,34 @@ genera además preguntas de análisis del conjunto:
 - **Sesiones en texto plano** — usuario y contraseña de FTP, puerto de datos
   negociado en modo pasivo, tamaño y nombre del archivo transferido, códigos
   de respuesta del servidor.
+
+## OWASP Top 10
+
+El resto del juego trabaja la seguridad de **red** (capas 2 a 4: ARP spoofing,
+floods, escaneos). `owasp.py` trabaja la seguridad de **aplicación**: las diez
+categorías del OWASP Top 10 (edición 2021) con las que se clasifican las
+vulnerabilidades web. Se abre desde el menú del juego o directamente:
+
+```bash
+python3 owasp.py          # menú interactivo
+python3 owasp.py --lista  # imprime el Top 10 con su definición
+python3 owasp.py --pcap   # (re)genera la captura de ataques
+```
+
+Tres modos:
+
+1. **Análisis de captura** — lee `files/owasp_http_attacks.pcap`, una captura
+   con peticiones HTTP que llevan un ataque dentro (SQL injection, XSS, command
+   injection, path traversal, IDOR, SSRF, Log4Shell, `.env` expuesto, fuerza
+   bruta, credenciales en claro). Muestra el volcado y la petición reconstruida,
+   y hay que decir a qué categoría del Top 10 corresponde. Es el puente con el
+   resto del juego: el ataque se **lee** en el tráfico. La captura se escribe en
+   `files/`, así que también se abre en Wireshark.
+2. **Definiciones** — qué es cada categoría, en los dos sentidos (de la
+   descripción al nombre y del nombre a la descripción).
+3. **Casos** — un relato de una brecha (inventado, al estilo de los de las
+   noticias: Log4Shell, SolarWinds, Equifax, credential stuffing...) y hay que
+   elegir qué categoría del Top 10 lo explica.
 
 ## Simulador de ventana deslizante
 

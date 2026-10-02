@@ -2461,6 +2461,7 @@ def preguntas_gbn_sr() -> List[Question]:
 RUTA_REFERENCIA = Path(__file__).resolve().parent / "referencia.py"
 RUTA_SIMULADOR = Path(__file__).resolve().parent / "ventana_deslizante.py"
 RUTA_TCP = Path(__file__).resolve().parent / "tcp_escenarios.py"
+RUTA_OWASP = Path(__file__).resolve().parent / "owasp.py"
 
 APPLESCRIPT_PANEL = """
 tell application "Finder"
@@ -2547,6 +2548,10 @@ def abrir_simulador() -> None:
 
 def abrir_tcp() -> None:
     _lanzar(RUTA_TCP)
+
+
+def abrir_owasp() -> None:
+    _lanzar(RUTA_OWASP)
 
 
 # ---------------------------------------------------------------------------
@@ -2862,6 +2867,7 @@ def main() -> None:
                       ["Jugar",
                        "Escenarios TCP aleatorios (SYN, ACK y ventana)",
                        "Simulador Go-Back-N y Selective Repeat",
+                       "OWASP Top 10 (seguridad de aplicaciones web)",
                        "Abrir la guía de referencia en una ventana",
                        "Cambiar de tema o de captura",
                        "Salir"])
@@ -2872,8 +2878,10 @@ def main() -> None:
         elif opcion == 2:
             abrir_simulador()
         elif opcion == 3:
-            abrir_panel_referencia()
+            abrir_owasp()
         elif opcion == 4:
+            abrir_panel_referencia()
+        elif opcion == 5:
             col = None
         else:
             print("\nHasta la próxima.")
