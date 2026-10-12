@@ -109,7 +109,7 @@ genera además preguntas de análisis del conjunto:
 
 El resto del juego trabaja la seguridad de **red** (capas 2 a 4: ARP spoofing,
 floods, escaneos). `owasp.py` trabaja la seguridad de **aplicación**: las diez
-categorías del OWASP Top 10 (edición 2021) con las que se clasifican las
+categorías del OWASP Top 10 (edición 2025) con las que se clasifican las
 vulnerabilidades web. Se abre desde el menú del juego o directamente:
 
 ```bash

